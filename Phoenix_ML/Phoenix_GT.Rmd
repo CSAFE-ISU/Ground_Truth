@@ -1,0 +1,630 @@
+---
+title: "Phoenix Rerun"
+author: "Andrew Maloney"
+date: "11/7/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+# Loading Packages
+library(dplyr)
+library(bulletxtrctr)
+library(x3ptools)
+library(ggplot2)
+library(readr)
+library(purrr)
+library(stringr)
+library(tidyr)
+```
+
+```{r eval=FALSE, include=FALSE}
+Phoenix <- tibble(path = list.files(path = "/media/Sunny/CSAFE/Phoenix Set",
+                                    pattern = ".x3p", recursive = T, full.names = T)) %>% 
+          mutate(Barrel = str_extract(path, "(Unknown|Gun [0-9]-[A-Z][0-9])") %>%
+                   str_remove("Gun 1-"),
+                 Bullet = str_extract(path, "(B[0-9]|Unknown 1-[A-Z])") %>%
+                   str_remove("Unknown 1-"),
+                 Land = str_extract(path, "/L[0-9]") %>%
+                   str_remove("/L")) %>%
+          mutate(x3p = map(path, read_x3p))
+```
+
+```{r}
+load("Ground_Truth_Data.RData")
+
+```
+
+```{r}
+#Checking scan orientation
+
+image(Phoenix$x3p[[1]])
+image(Phoenix$x3p[[10]])
+image(Phoenix$x3p[[100]])
+image(Phoenix$x3p[[200]])
+
+```
+
+***Notes***
+Bullets from the same barrel are considered matches.
+Bullets from different barrels are not considered matches.
+In case a bullet is unknown, we do not know whether there is a match or not.
+
+Lands from the same bullet are considered matches if they are from the same barrel.
+In case the lands are from bullets from different barrels they are not matches.
+
+***Questions to be Answered***
+There are a few key relationships we are trying to determine when comparing two Barrel-Bullet-Land IDs:
+- Matches between questioned and known bullets
+- Matches between questioned and other questioned bullets
+- Same lands between different bullets from the same barrel.
+- Same lands between any questioned bullets with any other bullet.
+
+
+```{r}
+# Determining Ground Truth
+# These features were obtained from the 2019 summer Bullet Project
+# Features were extracted from Bullet-Barrel-Land scans using the x3ptools & bulletxtrctr packages
+
+features <- Phoenix_Comparisons %>% 
+  select(-cms2_per_mm, -cms_per_mm, -lag_mm, -length_mm, 
+         -matches_per_mm, -mismatches_per_mm, -non_cms_per_mm, -rfscore)
+
+features <- features %>% mutate(
+  samesource = ifelse(BarrelA==BarrelB & BulletA == BulletB, LandA==LandB, NA),
+  samebarrel = BarrelA == BarrelB,
+  samebarrel = ifelse((BarrelA == "Unknown" | BarrelB == "Unknown") & (BulletA != BulletB), NA, samebarrel), 
+  samesource = ifelse(!samebarrel, FALSE, samesource)
+  )
+
+features <- features %>% mutate(
+  comparison = paste0(pmin(Bullet1, Bullet2)," vs ", pmax(Bullet1, Bullet2))
+)
+
+```
+
+***Explanation***
+We have created three new features:
+samesource - 1/6 between Barrel-Bullet-Land Scores
+samebarrel - Same Barrels when being compared or not the same Barrels when being compared
+comparison - Essential an ID column saying which Barrel-Bullet-Lands are being compared
+
+
+```{r}
+
+head(features, 10)
+
+features <- features %>% select(-cms2, -lag, -length) # Cleaning for future exploration
+
+head(features, 10)
+
+```
+
+***Notes Part 2***
+We are going to calculate:
+- "bestlandmatch" using SAM scores to determine which lands match the best between any two bullets
+
+- "sameland_pred" is to check if the SAM score is significantly higher than the non-matching lands(based on a bootsrap)
+
+- "samebarrel_pred" is the maximum for each bullet to bulelt comparison
+
+```{r}
+
+f2nest <- features %>%
+  group_by(BarrelA, BulletA, BarrelB, BulletB) %>% nest()
+
+f3nest <- f2nest %>% mutate(
+  sam_ccf = data %>% purrr::map_dbl(.f=function(d) 
+    max(bulletxtrctr::compute_average_scores(d$LandA, d$LandB, d$ccf, addNA = TRUE)))
+  )
+
+```
+
+```{r}
+
+head(f3nest)
+
+
+```
+
+```{r}
+
+f3nest <- f3nest %>% mutate(
+  data = data %>% purrr::map(.f = function(d) {
+    d$bestlandmatch = bulletxtrctr::bullet_to_land_predict(d$LandA, d$LandB, d$ccf, difference = -1, alpha = 1, addNA = FALSE)
+    d
+  })
+)
+
+```
+
+```{r}
+
+head(f3nest)
+
+```
+
+```{r}
+
+f3nest <- f3nest %>% mutate(
+  data = data %>% purrr::map(.f = function(d) {
+    d$sameland_pred = bulletxtrctr::bullet_to_land_predict(d$LandA, d$LandB, d$ccf, difference = 0.1, alpha = 0.05, addNA = FALSE)
+    d
+  })
+)
+
+```
+
+```{r}
+
+head(f3nest)
+
+```
+
+```{r}
+
+f3nest <- f3nest %>% mutate(
+  samebarrel_pred = data %>% purrr::map_dbl(.f = function(d)
+    max(d$sameland_pred))
+)
+
+```
+
+```{r}
+
+head(f3nest)
+
+```
+
+***Notes on Newly created features***
+bestlandmatch and sameland_pred are both nested currently in the data column.  This column is a tibble. 
+samebarrel_pred is showing the lands for each barrel comparisons of which have the higher sameland_pred scores.  It seems to be the first 3 lands between BulletA and BulletB.
+
+##Check Predictions
+- Now use "bestlandmatch to identify matching lands betweem different bullets from the same barrel
+
+```{r}
+
+f3long <- f3nest %>% 
+  filter(BarrelA == BarrelB, BulletA != BulletB, BarrelA != "Unknown") %>%
+    unnest(data) # Only looking at Barrels that are the same
+
+```
+
+```{r}
+
+head(f3long)
+
+```
+
+###Let's Plot some Heat Maps
+
+```{r}
+
+f3long %>%
+  ggplot(aes(x = LandA, y = LandB, fill = ccf))+
+  geom_tile()+
+  facet_wrap(~BarrelA+BulletA)+
+  scale_fill_gradient2(low = "darkgrey", high = "darkorange", midpoint = 0.5)+
+  scale_colour_manual(values = "darkorange")+
+  geom_point(colour = "midnightblue", data = f3long %>% filter(bestlandmatch))
+
+```
+
+```{r}
+
+f3long %>%
+  ggplot(aes(x = LandA, y = LandB, fill = ccf))+
+  geom_tile()+
+  facet_wrap(~BarrelA+BulletA+BulletB)+
+  scale_fill_gradient2(low = "darkgrey", high = "darkorange", midpoint = 0.5)+
+  scale_colour_manual(values = "darkorange")+
+  geom_point(colour = "midnightblue", data = f3long %>% filter(bestlandmatch))
+
+```
+
+```{r}
+#Distribution of best land matches from f3long
+table(f3long$bestlandmatch)
+
+```
+
+```{r}
+#Distribution of samesource
+table(features$samesource)
+
+```
+
+```{r}
+#Distribution of samebarrel
+table(features$samebarrel)
+
+
+```
+
+There seems to be a small amount of missing data. Barrel C8, Bullet B1, Land 3 is missing.  Barrel U1, Bullet B3, Land 5 is missing.  
+
+Investigate the missing data Barrels C8 and U1
+--- id: C8-B1-3 and U1-B3-5 are missing in the original phoenix data_set
+
+#Eye-Catchers(Best Land Matches that are not high ccf values):
+
+Barrel F6: B1|B3(4,3), B2|B3(2,3) 
+Barrel L5: B1|B2(1,2), B2|B3(2,1)
+Barrel M2: B1|B2(1,2), B2|B3(2,5)
+Barrel R3: B1|B3(4,5)+(5,6) [Weird but also same exact ccf values but differnt bullet comparisons] B2|B3(4,5)+(5,6)
+Barrel U1: B1|B2(1,3)+(2,4), B1|B3(2,6) 
+
+F6-B1-4 vs F6-B3-3: samebarrel = TRUE, bestlandmatch = TRUE, sameland_pred = TRUE, ccf = 0.52, sam_ccf = 0.72, (matches and mismatches both = 18?, overlap = 1.00)
+
+F6-B2-2 vs F6-B3-3: samebarrel = TRUE, beslandmatch = TRUE, sameland_pred = TRUE, ccf = 0.49, sam_ccf = 0.71, (matches = 28, mismatches = 11, overlap = 0.99)
+
+```{r}
+# F6-B1-4 and F6-B3-3
+# F6-B2-2 and F6-B3-3
+
+image(Phoenix$x3p[[39]])
+image(Phoenix$x3p[[50]])
+
+image(Phoenix$x3p[[43]])
+image(Phoenix$x3p[[50]])
+
+# F6-B1-4 and F6-B2-2 seem to be in very bad shape
+```
+
+```{r}
+
+#### Barrel M2: B1|B2(1,2), B2|B3(2,5)
+
+# M2-B1-1 and M2-B2-2
+# M2-B2-2 and M2-B2-5
+
+image(Phoenix$x3p[[72]])
+image(Phoenix$x3p[[79]])
+
+image(Phoenix$x3p[[79]])
+image(Phoenix$x3p[[82]])
+
+#Lands 1, 2, and 5 seem to have similar damage near the heal of the bullet
+
+```
+
+```{r}
+
+
+
+#### Barrel R3: B1|B3(4,5)+(5,6) [Weird but also same exact ccf values but differnt bullet comparisons] B2|B3(4,5)+(5,6)
+
+# R3-B1-4 and R3-B3-5
+# R3-B1-5 and R3-B3-6
+# R3-B2-4 and R3-B3-5
+# R3-B2-5 and R3-B3-6
+
+image(Phoenix$x3p[[111]])
+image(Phoenix$x3p[[124]])
+
+image(Phoenix$x3p[[112]])
+image(Phoenix$x3p[[125]])
+
+image(Phoenix$x3p[[117]])
+image(Phoenix$x3p[[124]])
+
+image(Phoenix$x3p[[118]])
+image(Phoenix$x3p[[125]])
+
+```
+
+```{r}
+
+features <- f3nest %>% unnest(data)
+
+features <- features %>% mutate(
+  samesource = ifelse(BarrelA == BarrelB & BulletA != BulletB & BarrelA != "Unknown", bestlandmatch, samesource)
+)
+
+```
+
+```{r}
+
+head(features, 10)
+
+```
+
+```{r}
+#Description of features same source, FALSE and TRUE both increased in entries
+table(features$samesource)
+
+```
+
+```{r}
+
+f3nest <- features %>%
+  group_by(comparison, BarrelA, BulletA, BarrelB, 
+           BulletB, samebarrel, samebarrel_pred, sam_ccf,
+           Bullet1, Bullet2) %>% nest()
+
+```
+
+***Matches with questioned bullets***
+
+Any matches with questioned bullets are based on predictions only.
+Ground truth can only be determined in collaboration with the owners of the study. 
+
+This affects all of the following open questions:
+-matches between questioned and known bullets
+- matches between questioned and other questioned bullets
+- same lands between any questioned bullets woth any other bullets
+
+In comparing known samesource(base on bootstrap) we expect to see orange dots(predicted samesource) for known samesource and gray dots(predicted different source) for known different source comparisons $(*)
+
+```{r}
+
+f3nest <- f3nest %>% mutate(
+  truth = c("different-source", "same-source")[samebarrel+1],
+  truth = ifelse(is.na(samebarrel), "Unknown", truth),
+  prediction = c("different-source", "same-source")[samebarrel_pred+1]
+)
+
+```
+
+```{r}
+# plot $(*)
+
+f3nest %>% group_by(comparison) %>%
+  summarise(sam_ccf = mean(sam_ccf),
+            truth = truth[1],
+            prediction = prediction[1]) %>%
+  ggplot(aes(x = sam_ccf, y = truth, colour = prediction))+
+  geom_jitter()+
+  theme_bw()+
+  scale_colour_manual(values = c("darkgrey", "darkorange"))
+
+```
+
+***Graph Analysis***
+Looking at the graph above we can see many points plotted but what is being described here?  We have 3 sources which are "same-source", "different-source", and "Unknown."
+
+Our results look very good.  We would expect to see same-source points plotted around higher sam_ccf scores and different-source points plotted at the lower end of sam_ccf scores.  The Predicted "same-source" points are ploted around the true "same-source" points. The predicted "different-source" points are plotted arund the true "different-source" points.  For the true "unknown" barrels in question, we see a mix of predicted "different source" and "same-source" points.  There doesn't seem to be any predicted "different-source"" points plotted around the true "same-source" area and vice versus.  These results are exactly what we were hoping for.
+
+```{r}
+#There does not seem to be any recognized truth that is dofferent than the predictions
+
+f3nest %>% filter(truth == "different-source" & prediction == "same-source")
+
+```
+
+
+
+```{r}
+#Filter for questioned bullets
+questioned <- f3nest %>% filter(BarrelB == "Unknown")
+
+```
+
+```{r}
+
+table(questioned$BarrelA)
+
+```
+
+```{r}
+
+questioned <- questioned %>%
+  ungroup(BarrelA) %>%
+  mutate(
+    BarrelA = factor(factor(BarrelA), levels = c("A9", "C8", "F6", "L5", "M2", "P7", "R3", "U1", "Unknown")),
+    BulletB = factor(BulletB, levels = rev(c("B", "E", "H", "J", "K", "N", "Q", "T", "Y", "Z"))),
+    BulletA = factor(BulletA, levels = c("B1", "B2", "B3", rev(levels(BulletB))))
+  ) 
+
+
+
+questioned %>%
+  ggplot(aes(x = BulletA, y = BulletB, fill=sam_ccf)) + 
+  geom_tile(data = questioned) +
+  scale_fill_gradient2(low="darkgrey", high="darkorange", midpoint=.5) +
+  scale_colour_manual(values=c("darkorange")) +
+  facet_grid(.~BarrelA, space = "free", scales="free") +
+  theme_bw() +
+  geom_point(colour = "midnightblue", data = questioned %>% filter(samebarrel_pred==1))
+
+```
+
+The figure suggests that mostly, we should be able to accept the same-source predictions for each of the barrels as ground truth.
+In particular, concistency in the matches between a questioned bullet and a single barrel provide strong evidence in the correctness of a prediction: 
+ideally, we would like to see a match between 
+- a questioned bullet and all three bullets of a single barrel
+- questioned bullets that match to the same barrel
+
+This is true for all unknown bullets with the exception of bullets Q, Y, and Z. 
+Bullets Q, Y, and Z match to none of the bullets of any barrel. 
+
+```{r}
+
+f3nest <- f3nest %>% ungroup(samebarrel) %>%
+  mutate(
+  samebarrel = ifelse(BarrelA == "Unknown" & (BulletA != BulletB),
+                      samebarrel_pred == 1, samebarrel)
+)
+
+```
+
+```{r}
+
+f3nest <- f3nest %>% mutate(
+  samebarrel = ifelse(BarrelB == "Unknown" & (BulletA != BulletB),
+                      samebarrel_pred == 1, samebarrel)
+)
+
+```
+
+```{r}
+#Change True's and False's for Bullets
+
+
+
+```
+
+```{r}
+
+head(f3nest)
+
+
+```
+
+```{r}
+
+f2 <- f3nest %>% unnest(data)
+f2 <- f2 %>% mutate(
+  samesource = ifelse(is.na(samesource) & !samebarrel, FALSE, samesource),
+  samesource = ifelse(is.na(samesource) & samebarrel, bestlandmatch, samesource)
+)
+
+```
+
+```{r}
+
+head(f2)
+
+```
+
+```{r}
+questioned <- f2 %>% filter(BarrelB == "Unknown")
+
+questioned <- questioned %>%
+  ungroup(BarrelA) %>%
+  mutate(
+    BarrelA = factor(factor(BarrelA), levels = c("A9", "C8", "F6", "L5", "M2", "P7", "R3", "U1", "Unknown")),
+    BulletB = factor(BulletB, levels = rev(c("B", "E", "H", "J", "K", "N", "Q", "T", "Y", "Z"))),
+    BulletA = factor(BulletA, levels = c("B1", "B2", "B3", rev(levels(BulletB))))
+  ) 
+
+
+questioned %>%
+  ggplot(aes(x = LandA, y = LandB, fill=ccf)) + geom_tile() +
+  scale_fill_gradient2(low="darkgrey", high="darkorange", midpoint=.5) +
+  facet_grid(BulletB~BarrelA+BulletA) +
+  geom_point(colour = "red", data = questioned %>% filter(samesource))
+
+```
+
+
+
+```{r}
+table(f2$samesource)
+```
+
+```{r}
+f2 <- f2 %>% mutate(
+  samesource = ifelse(questioned$samesource == "TRUE" & f2$samesource == "FALSE", TRUE, samesource)
+)
+
+```
+
+```{r}
+table(f2$samesource)
+```
+
+```{r}
+library(caret)
+set.seed(91191199)#20140501
+inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
+training_p <- f2[ inTraining_p,]
+testing_p  <- f2[-inTraining_p,]
+```
+
+```{r} 
+#Model1
+fitControl <- trainControl(## 10-fold CV
+                           method ='repeatedcv',
+                           number = 10,
+                           repeats = 3,
+                           search = 'random')
+
+mtry <- sqrt(ncol(training_p))
+tunegrid <- expand.grid(.mtry=mtry)
+model1 <- train(as.factor(samesource) ~ ccf
+                 +rough_cor
+                 +D
+                 +sd_D
+                 +matches
+                 +mismatches
+                 +cms+non_cms
+                 +sum_peaks, 
+                 data = training_p, 
+                 method = "rf",
+                 tuneLength = 15,
+                 trControl = fitControl)
+
+print(model1)
+
+rf_pred1 <- predict(model1, testing_p)
+confusionMatrix(rf_pred1, as.factor(testing_p$samesource))
+
+#lag, 
+
+```
+
+```{r}
+
+confusionMatrix(rf_pred1, as.factor(testing_p$samesource))
+
+```
+
+```{r}
+fitControl <- trainControl(## 10-fold CV
+                           method ='repeatedcv',
+                           number = 10,
+                           repeats = 3,
+                           search = 'random')
+
+mtry <- sqrt(ncol(training_p))
+tunegrid <- expand.grid(.mtry=mtry)
+model2 <- train(as.factor(samesource) ~ ccf
+                 +rough_cor
+                 +D
+                 +sd_D
+                 +matches
+                 +mismatches
+                 +cms+non_cms
+                 +sum_peaks
+                 +overlap,
+                 data = training_p, 
+                 method = "rf",
+                 tuneLength = 15,
+                 trControl = fitControl)
+
+print(model2)
+
+rf_pred2 <- predict(model2, testing_p)
+confusionMatrix(rf_pred2, as.factor(testing_p$samesource))
+
+```
+
+
+
+Accuracy for both models is around the same.  Now we will try and find miss classified ground truth results by examining signature between Barrel_Bullet_Land comparisons.
+```{r}
+
+Signatures_Phoenix %>%
+  filter(Barrel != "Unknown") %>%
+    ggplot(data = ., aes(x = x, y = sig, color = Land)) + 
+      geom_line()+
+        facet_grid(paste("Bullet", Bullet) ~ sprintf("Barrel %02s", Barrel))+
+          theme_bw()+
+            ggtitle("Signatures for Known Barrels")
+
+Signatures_Phoenix %>%
+  filter(Barrel == "Unknown") %>%
+    ggplot(data = ., aes(x = x, y = sig, color = Land)) + 
+      geom_line()+
+        facet_wrap(paste("Bullet", Bullet) ~ sprintf("Barrel %02s", Barrel))+
+          theme_bw()+
+            ggtitle("Signatures for Questioned Bullets")
+
+```
