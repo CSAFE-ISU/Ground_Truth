@@ -1,0 +1,645 @@
+---
+title: "Houston_Ground_Truth"
+author: "Andrew Maloney"
+date: "9/4/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+# Loading Packages
+library(dplyr)
+library(bulletxtrctr)
+library(x3ptools)
+library(ggplot2)
+library(readr)
+library(purrr)
+library(stringr)
+library(tidyr)
+
+
+```
+
+## Determine ground truth for lands and bullets
+
+### Step One
+
+- bullets from the same barrel are matches, bullets from different barrels are not matches. In case one of the bullets is unknown, we do not know whether there is a match or not.
+
+- Lands from the same bullet are matches if they are the same.  In case the lands are on bullets from different barrels they are not matches
+
+Not known yet: 
+
+-Matches between questioned and known bullets
+-Matches between questioned and other questioned bullets
+- Same lands between different bullets from the same barrel 
+-same lands between any questioned bullets with any other bullet
+
+```{r}
+# Determining Ground Truth 
+
+features_1 <- comparisons_1 %>% select(-cms2_per_mm, -cms_per_mm, -lag_mm, -length_mm, -matches_per_mm, -mismatches_per_mm, -non_cms_per_mm, -rfscore)
+
+features_1 <- features_1 %>% mutate(
+  samesource = ifelse(BarrelA==BarrelB & BulletA == BulletB, LandA==LandB, NA),
+  samebarrel = BarrelA == BarrelB,
+  samebarrel = ifelse((BarrelA == "Unknowns" | BarrelB == "Unknowns") & (BulletA != BulletB), NA, samebarrel),
+  samesource = ifelse(!samebarrel, FALSE, samesource)
+  )
+
+
+features_1 <- features_1 %>% mutate(comparison = paste0(pmin(Bullet1, Bullet2)," vs ", pmax(Bullet1, Bullet2)))
+
+head(features_1)
+
+#samesource = 1/6 between Barrel-Bullet-Land Scores
+#samebarrel = Same Barrels when being compared
+#comparison = Comparisons of Barrel-Bullet-Land
+
+#-----------------------------------------------------------------------------------------------
+
+features_2 <- comparisons_2 %>% select(-cms2_per_mm, -cms_per_mm, -lag_mm, -length_mm, -matches_per_mm, -mismatches_per_mm, -non_cms_per_mm, -rfscore)
+
+features_2 <- features_2 %>% mutate(
+  samesource = ifelse(BarrelA==BarrelB & BulletA == BulletB, LandA==LandB, NA),
+  samebarrel = BarrelA == BarrelB,
+  samebarrel = ifelse((BarrelA == "Unknowns" | BarrelB == "Unknowns") & (BulletA != BulletB), NA, samebarrel),
+  samesource = ifelse(!samebarrel, FALSE, samesource)
+  )
+
+
+features_2 <- features_2 %>% mutate(comparison = paste0(pmin(Bullet1, Bullet2)," vs ", pmax(Bullet1, Bullet2)))
+
+head(features_2)
+
+#-------------------------------------------------------------------------------------------------
+
+
+features_3 <- comparisons_3 %>% select(-cms2_per_mm, -cms_per_mm, -lag_mm, -length_mm, -matches_per_mm, -mismatches_per_mm, -non_cms_per_mm, -rfscore)
+
+features_3 <- features_3 %>% mutate(
+  samesource = ifelse(BarrelA==BarrelB & BulletA == BulletB, LandA==LandB, NA),
+  samebarrel = BarrelA == BarrelB,
+  samebarrel = ifelse((BarrelA == "Unknowns" | BarrelB == "Unknowns") & (BulletA != BulletB), NA, samebarrel),
+  samesource = ifelse(!samebarrel, FALSE, samesource)
+  )
+
+
+features_3 <- features_3 %>% mutate(comparison = paste0(pmin(Bullet1, Bullet2)," vs ", pmax(Bullet1, Bullet2)))
+
+head(features_3)
+```
+
+
+### Step Two 
+
+Calculate: 
+- "bestlandmatch" is using SAM scores to determine which lands match the best between any two bullets
+
+- "sameland_pred" is calculated for all bullets to check if the SAM score is significantly higher than the non-matching lands (based on a bootstrap)
+
+- "samebarrel_pred" is the maximum for each bullet to bullet comparison
+
+```{r}
+
+
+f2nest_1 <- features_1 %>% 
+#  filter(!(barrel1==barrel2 & bullet1 == bullet2)) %>% 
+  group_by(BarrelA, BulletA, BarrelB, BulletB) %>%  nest()  
+
+
+f3nest_1 <- f2nest_1 %>% mutate(
+  sam_ccf = data %>% purrr::map_dbl(.f=function(d) 
+    max(bulletxtrctr::compute_average_scores(d$LandA, d$LandB, d$ccf, addNA = TRUE)))
+  )
+
+
+
+f3nest_1 <- f3nest_1 %>% mutate(
+  data = data %>% purrr::map(.f=function(d) {
+    d$bestlandmatch = bulletxtrctr::bullet_to_land_predict(d$LandA, d$LandB, d$ccf, difference=-1, alpha = 1, addNA = FALSE)    
+    d
+  })
+  )
+
+
+f3nest_1 <- f3nest_1 %>% mutate(
+  data = data %>% purrr::map(.f=function(d) {
+    d$sameland_pred = bulletxtrctr::bullet_to_land_predict(d$LandA, d$LandB, d$ccf, difference=0.1, alpha = 0.05, addNA = FALSE)    
+    d
+  })
+  )
+
+f3nest_1 <- f3nest_1 %>% mutate(
+  samebarrel_pred = data %>% purrr::map_dbl(.f=function(d) 
+    max(d$sameland_pred))
+  )
+
+
+#--------------------------------------------------------------------------------
+
+
+
+f2nest_2 <- features_2 %>% 
+#  filter(!(barrel1==barrel2 & bullet1 == bullet2)) %>% 
+  group_by(BarrelA, BulletA, BarrelB, BulletB) %>%  nest()  
+
+
+f3nest_2 <- f2nest_2 %>% mutate(
+  sam_ccf = data %>% purrr::map_dbl(.f=function(d) 
+    max(bulletxtrctr::compute_average_scores(d$LandA, d$LandB, d$ccf, addNA = TRUE)))
+  )
+
+
+
+f3nest_2 <- f3nest_2 %>% mutate(
+  data = data %>% purrr::map(.f=function(d) {
+    d$bestlandmatch = bulletxtrctr::bullet_to_land_predict(d$LandA, d$LandB, d$ccf, difference=-1, alpha = 1, addNA = FALSE)    
+    d
+  })
+  )
+
+
+f3nest_2 <- f3nest_2 %>% mutate(
+  data = data %>% purrr::map(.f=function(d) {
+    d$sameland_pred = bulletxtrctr::bullet_to_land_predict(d$LandA, d$LandB, d$ccf, difference=0.1, alpha = 0.05, addNA = FALSE)    
+    d
+  })
+  )
+
+f3nest_2 <- f3nest_2 %>% mutate(
+  samebarrel_pred = data %>% purrr::map_dbl(.f=function(d) 
+    max(d$sameland_pred))
+  )
+
+#--------------------------------------------------------------------------------
+
+f2nest_3 <- features_3 %>% 
+#  filter(!(barrel1==barrel2 & bullet1 == bullet2)) %>% 
+  group_by(BarrelA, BulletA, BarrelB, BulletB) %>%  nest()  
+
+
+f3nest_3 <- f2nest_3 %>% mutate(
+  sam_ccf = data %>% purrr::map_dbl(.f=function(d) 
+    max(bulletxtrctr::compute_average_scores(d$LandA, d$LandB, d$ccf, addNA = TRUE)))
+  )
+
+
+
+f3nest_3 <- f3nest_3 %>% mutate(
+  data = data %>% purrr::map(.f=function(d) {
+    d$bestlandmatch = bulletxtrctr::bullet_to_land_predict(d$LandA, d$LandB, d$ccf, difference=-1, alpha = 1, addNA = FALSE)    
+    d
+  })
+  )
+
+
+f3nest_3 <- f3nest_3 %>% mutate(
+  data = data %>% purrr::map(.f=function(d) {
+    d$sameland_pred = bulletxtrctr::bullet_to_land_predict(d$LandA, d$LandB, d$ccf, difference=0.1, alpha = 0.05, addNA = FALSE)    
+    d
+  })
+  )
+
+f3nest_3 <- f3nest_3 %>% mutate(
+  samebarrel_pred = data %>% purrr::map_dbl(.f=function(d) 
+    max(d$sameland_pred))
+  )
+
+
+```
+
+
+
+Check Predictions 
+
+- Use "bestlandmatch" to identify matching lands between different bullets from the same barrel
+
+
+```{r}
+
+f3long_1 <- f3nest_1 %>% filter(BarrelA==BarrelB, BulletA!=BulletB, BarrelA != "Unknowns") %>%
+  unnest(data) 
+
+f3long_1 %>%
+  ggplot(aes(x = LandA, y = LandB, fill=ccf)) +
+  geom_tile() +
+  facet_wrap(~BarrelA+BulletA+BulletB) +
+  scale_fill_gradient2(low="darkgrey", high="darkorange", midpoint=.5) +
+  scale_colour_manual(values="darkorange") +
+  geom_point(colour="red", data = f3long_1 %>% filter(bestlandmatch))+
+  ggtitle("Houston_Group_1")
+
+
+#---------------------------------------------------------------------
+
+f3long_2 <- f3nest_2 %>% filter(BarrelA==BarrelB, BulletA!=BulletB, BarrelA != "Unknowns") %>%
+  unnest(data) 
+f3long_2 %>%
+  ggplot(aes(x = LandA, y = LandB, fill=ccf)) +
+  geom_tile() +
+  facet_wrap(~BarrelA+BulletA+BulletB) +
+  scale_fill_gradient2(low="darkgrey", high="darkorange", midpoint=.5) +
+  scale_colour_manual(values="darkorange") +
+  geom_point(colour="red", data = f3long_2 %>% filter(bestlandmatch))+
+  ggtitle("Houston_Group_2")
+
+#--------------------------------------------------------------------
+
+f3long_3 <- f3nest_3 %>% filter(BarrelA==BarrelB, BulletA!=BulletB, BarrelA != "Unknowns") %>%
+  unnest(data) 
+f3long_3 %>%
+  ggplot(aes(x = LandA, y = LandB, fill=ccf)) +
+  geom_tile() +
+  facet_wrap(~BarrelA+BulletA+BulletB) +
+  scale_fill_gradient2(low="darkgrey", high="darkorange", midpoint=.5) +
+  scale_colour_manual(values="darkorange") +
+  geom_point(colour="red", data = f3long_3 %>% filter(bestlandmatch))+
+  ggtitle("Houston_Group_3")
+
+
+```
+
+```{r}
+
+
+features_1 <- f3nest_1 %>% unnest(data)
+
+features_1 <- features_1 %>% mutate(
+  samesource = ifelse(BarrelA==BarrelB & BulletA!=BulletB & BarrelA != "Unknown", bestlandmatch, samesource)
+)
+
+
+table(features_1$samesource)
+
+f3nest_1 <- features_1 %>% 
+#  filter(!(barrel1==barrel2 & bullet1 == bullet2)) %>% 
+  group_by(comparison,BarrelA, BulletA, BarrelB, BulletB, samebarrel, samebarrel_pred,
+           sam_ccf, Bullet1, Bullet2) %>%  nest() 
+
+
+
+
+#---------------------------------------------------------------------------------------------
+
+features_2 <- f3nest_2 %>% unnest(data)
+
+features_2 <- features_2 %>% mutate(
+  samesource = ifelse(BarrelA==BarrelB & BulletA!=BulletB & BarrelA != "Unknown", bestlandmatch, samesource)
+)
+
+
+table(features_2$samesource)
+
+f3nest_2 <- features_2 %>% 
+#  filter(!(barrel1==barrel2 & bullet1 == bullet2)) %>% 
+  group_by(comparison,BarrelA, BulletA, BarrelB, BulletB, samebarrel, samebarrel_pred,
+           sam_ccf, Bullet1, Bullet2) %>%  nest() 
+
+
+#--------------------------------------------------------------------------------------------------
+
+features_3 <- f3nest_3 %>% unnest(data)
+
+features_3 <- features_3 %>% mutate(
+  samesource = ifelse(BarrelA==BarrelB & BulletA!=BulletB & BarrelA != "Unknown", bestlandmatch, samesource)
+)
+
+
+table(features_3$samesource)
+
+f3nest_3 <- features_3 %>% 
+#  filter(!(barrel1==barrel2 & bullet1 == bullet2)) %>% 
+  group_by(comparison,BarrelA, BulletA, BarrelB, BulletB, samebarrel, samebarrel_pred,
+           sam_ccf, Bullet1, Bullet2) %>%  nest() 
+
+
+```
+
+```{r}
+
+f3nest_1 <- f3nest_1 %>% mutate(
+  truth = c("different-source", "same-source")[samebarrel+1],
+  truth = ifelse(is.na(samebarrel), "Unknown", truth),
+  prediction = c("different-source", "same-source")[samebarrel_pred+1]
+) 
+
+
+f3nest_1 %>% group_by(comparison) %>%
+  summarise(sam_ccf = mean(sam_ccf),
+            truth = truth[1],
+            prediction = prediction[1]) %>% 
+  ggplot(aes(x = sam_ccf, y = truth, colour = prediction)) + geom_jitter() +
+  theme_bw() +
+  scale_colour_manual(values=c("darkgrey", "darkorange"))+
+  ggtitle("Houston_Group_1")
+
+#----------------------------------------------------------
+
+f3nest_2 <- f3nest_2 %>% mutate(
+  truth = c("different-source", "same-source")[samebarrel+1],
+  truth = ifelse(is.na(samebarrel), "Unknown", truth),
+  prediction = c("different-source", "same-source")[samebarrel_pred+1]
+) 
+
+
+f3nest_2 %>% group_by(comparison) %>%
+  summarise(sam_ccf = mean(sam_ccf),
+            truth = truth[1],
+            prediction = prediction[1]) %>% 
+  ggplot(aes(x = sam_ccf, y = truth, colour = prediction)) + geom_jitter() +
+  theme_bw() +
+  scale_colour_manual(values=c("darkgrey", "darkorange"))+
+  ggtitle("Houston_Group_2")
+
+
+#-----------------------------------------------------------------------------
+
+f3nest_3 <- f3nest_3 %>% mutate(
+  truth = c("different-source", "same-source")[samebarrel+1],
+  truth = ifelse(is.na(samebarrel), "Unknown", truth),
+  prediction = c("different-source", "same-source")[samebarrel_pred+1]
+) 
+
+
+f3nest_3 %>% group_by(comparison) %>%
+  summarise(sam_ccf = mean(sam_ccf),
+            truth = truth[1],
+            prediction = prediction[1]) %>% 
+  ggplot(aes(x = sam_ccf, y = truth, colour = prediction)) + geom_jitter() +
+  theme_bw() +
+  scale_colour_manual(values=c("darkgrey", "darkorange"))+
+  ggtitle("Houston_Group_3")
+
+
+
+
+```
+
+```{r}
+#Same Plot as above but a condensed facet 
+
+f3long_1 %>%
+  ggplot(aes(x = LandA, y = LandB, fill=ccf)) +
+  geom_tile() +
+  facet_wrap(~BarrelA) +
+  scale_fill_gradient2(low="darkgrey", high="darkorange", midpoint=.5) +
+  geom_point(colour="red", data = f3long_1 %>% filter(sameland_pred)) 
+
+f3long_2 %>%
+  ggplot(aes(x = LandA, y = LandB, fill=ccf)) +
+  geom_tile() +
+  facet_wrap(~BarrelA) +
+  scale_fill_gradient2(low="darkgrey", high="darkorange", midpoint=.5) +
+  geom_point(colour="red", data = f3long_2 %>% filter(sameland_pred)) 
+
+f3long_3 %>%
+  ggplot(aes(x = LandA, y = LandB, fill=ccf)) +
+  geom_tile() +
+  facet_wrap(~BarrelA) +
+  scale_fill_gradient2(low="darkgrey", high="darkorange", midpoint=.5) +
+  geom_point(colour="red", data = f3long_3 %>% filter(sameland_pred)) 
+
+
+
+
+
+```
+
+```{r}
+f3nest_1 %>% filter(truth =="different-source" & prediction=="same-source")
+
+f3nest_2 %>% filter(truth =="different-source" & prediction=="same-source")
+
+f3nest_3 %>% filter(truth =="different-source" & prediction=="same-source")
+
+
+```
+
+```{r}
+
+table(f3nest_1$BulletA)
+
+
+questioned_1 <- f3nest_1 %>% filter(BarrelB == "Unknowns")
+
+
+
+
+
+questioned_1 %>%
+  ggplot(aes(x = BulletA, y = BulletB, fill=sam_ccf)) + 
+  geom_tile(data = questioned_1) +
+  scale_fill_gradient2(low="darkgrey", high="darkorange1", midpoint=.5) +
+  scale_colour_manual(values=c("darkorange")) +
+  facet_grid(.~BarrelA, space = "free", scales="free") +
+  theme_bw() +
+  geom_tile(colour = "black", size=1)+
+  geom_point(colour = "red", data = questioned_1 %>% filter(samebarrel_pred==1))+
+  ggtitle("Houston_Group_1")
+
+
+
+
+```
+
+```{r}
+
+
+table(f3nest_2$BulletA)
+
+
+questioned_2 <- f3nest_2 %>% filter(BarrelB == "Unknowns")
+
+questioned_2 <- questioned_2 %>%
+  ungroup(BarrelA) %>%
+  mutate(
+    BarrelA = factor(factor(BarrelA), levels = c("KC", "KD", "KE", "KF", "KG", "Unknowns")),
+    BulletB = factor(BulletB, levels = rev(c("U23", "U34", "U41", "U61", "U63", "U66", "U73", "U98"))),
+    BulletA = factor(BulletA, levels = c("1", "2", "3", rev(levels(BulletB))))
+  ) 
+
+
+
+questioned_2 %>%
+  ggplot(aes(x = BulletA, y = BulletB, fill=sam_ccf)) + 
+  geom_tile(data = questioned_2) +
+  scale_fill_gradient2(low="darkgrey", high="darkorange1", midpoint=.5) +
+  scale_colour_manual(values=c("darkorange")) +
+  facet_grid(.~BarrelA, space = "free", scales="free") +
+  theme_bw() +
+  geom_tile(colour = "black", size=1)+
+  geom_point(colour = "red", data = questioned_2 %>% filter(samebarrel_pred==1))+
+  ggtitle("Houston_Group_2")
+
+```
+
+```{r}
+
+
+table(f3nest_3$BarrelA)
+
+
+questioned_3 <- f3nest_3 %>% filter(BarrelB == "Unknowns")
+
+questioned_3 <- questioned_3 %>%
+  ungroup(BarrelA) %>%
+  mutate(
+    BarrelA = factor(factor(BarrelA), levels = c("KF", "KG", "KH", "KI", "KJ", "Unknowns")),
+    BulletB = factor(BulletB, levels = rev(c("U14", "U27", "U33", "U36", "U45", "U49", "U56", "U65"))),
+    BulletA = factor(BulletA, levels = c("1", "2", "3", rev(levels(BulletB))))
+  ) 
+
+
+
+questioned_3 %>%
+  ggplot(aes(x = BulletA, y = BulletB, fill=sam_ccf)) + 
+  geom_tile(data = questioned_3) +
+  scale_fill_gradient2(low="darkgrey", high="darkorange1", midpoint=.5) +
+  scale_colour_manual(values=c("darkorange")) +
+  facet_grid(.~BarrelA, space = "free", scales="free") +
+  theme_bw() +
+  geom_tile(colour = "black", size=1)+
+  geom_point(colour = "red", data = questioned_3 %>% filter(samebarrel_pred==1))+
+  ggtitle("Houston_Group_3")
+
+
+
+
+
+
+
+```
+
+
+```{r}
+
+
+f2_1 <- f3nest_1 %>% unnest(data)
+f2_1 <- f2_1 %>% mutate(
+  samesource = ifelse(is.na(samesource) & !samebarrel, FALSE, samesource),
+  samesource = ifelse(is.na(samesource) & samebarrel, bestlandmatch, samesource)
+)
+
+```
+
+```{r}
+f2_2 <- f3nest_2 %>% unnest(data)
+f2_2 <- f2_2 %>% mutate(
+  samesource = ifelse(is.na(samesource) & !samebarrel, FALSE, samesource),
+  samesource = ifelse(is.na(samesource) & samebarrel, bestlandmatch, samesource)
+)
+
+```
+
+```{r}
+f2_3 <- f3nest_3 %>% unnest(data)
+f2_3 <- f2_3 %>% mutate(
+  samesource = ifelse(is.na(samesource) & !samebarrel, FALSE, samesource),
+  samesource = ifelse(is.na(samesource) & samebarrel, bestlandmatch, samesource)
+)
+
+```
+
+
+```{r}
+questioned_1 <- f2_1 %>% filter(BarrelB == "Unknowns")
+
+questioned_1 <- questioned_1 %>%
+  ungroup(BarrelA) %>%
+  mutate(
+    BarrelA = factor(factor(BarrelA), levels = c("KA", "KB", "KC", "KD", "KE", "Unknowns")),
+    BulletB = factor(BulletB, levels = rev(c("U10", "U15", "U28", "U36", "U37", "U40", "U42", "U77"))),
+    BulletA = factor(BulletA, levels = c("1", "2", "3", rev(levels(BulletB))))
+  ) 
+
+```
+
+
+```{r}
+
+questioned_2 <- f2_2 %>% filter(BarrelB == "Unknowns")
+
+questioned_2 <- questioned_2 %>%
+  ungroup(BarrelA) %>%
+  mutate(
+    BarrelA = factor(factor(BarrelA), levels = c("KC", "KD", "KE", "KF", "KG", "Unknowns")),
+    BulletB = factor(BulletB, levels = rev(c("U23", "U34", "U41", "U61", "U63", "U66", "U73", "U98"))),
+    BulletA = factor(BulletA, levels = c("1", "2", "3", rev(levels(BulletB))))
+  ) 
+
+```
+
+
+```{r}
+questioned_3 <- f2_3 %>% filter(BarrelB == "Unknowns")
+
+questioned_3 <- questioned_3 %>%
+  ungroup(BarrelA) %>%
+  mutate(
+    BarrelA = factor(factor(BarrelA), levels = c("KF", "KG", "KH", "KI", "KJ", "Unknowns")),
+    BulletB = factor(BulletB, levels = rev(c("U14", "U27", "U33", "U36", "U45", "U49", "U56", "U65"))),
+    BulletA = factor(BulletA, levels = c("1", "2", "3", rev(levels(BulletB))))
+  )
+
+```
+
+```{r}
+f2_1 <- f2_1 %>% mutate(
+  samesource = ifelse(questioned_1$samesource == "TRUE" & f2_1$samesource == "FALSE", TRUE, samesource)
+)
+
+f2_2 <- f2_2 %>% mutate(
+  samesource = ifelse(questioned_2$samesource == "TRUE" & f2_2$samesource == "FALSE", TRUE, samesource)
+)
+
+
+f2_3 <- f2_3 %>% mutate(
+  samesource = ifelse(questioned_3$samesource == "TRUE" & f2_3$samesource == "FALSE", TRUE, samesource)
+)
+
+```
+
+
+```{r}
+library(caret)
+set.seed(91191199)#20140501
+inTraining_p <- createDataPartition(f2_1$samesource, p = .80, list = FALSE)
+training_p <- f2_1[ inTraining_p,]
+testing_p  <- f2_1[-inTraining_p,]
+```
+
+```{r} 
+#Model1
+fitControl <- trainControl(## 10-fold CV
+                           method ='repeatedcv',
+                           number = 10,
+                           repeats = 3,
+                           search = 'random')
+
+mtry <- sqrt(ncol(training_p))
+tunegrid <- expand.grid(.mtry=mtry)
+model1 <- train(as.factor(samesource) ~ ccf
+                 +rough_cor
+                 +D
+                 +sd_D
+                 +matches
+                 +mismatches
+                 +cms+non_cms
+                 +sum_peaks, 
+                 data = training_p, 
+                 method = "rf",
+                 tuneLength = 15,
+                 trControl = fitControl)
+
+print(model1)
+
+rf_pred1 <- predict(model1, testing_p)
+confusionMatrix(rf_pred1, as.factor(testing_p$samesource))
+```
+
