@@ -463,12 +463,6 @@ f3nest <- f3nest %>% mutate(
 
 ```
 
-```{r}
-#Change True's and False's for Bullets
-
-
-
-```
 
 ```{r}
 
@@ -608,7 +602,7 @@ confusionMatrix(rf_pred2, as.factor(testing_p$samesource))
 
 
 
-Accuracy for both models is around the same.  Now we will try and find miss classified ground truth results by examining signature between Barrel_Bullet_Land comparisons.
+Accuracy for both models is around the same.  Now we will try and find miss classified ground truth results by examining signatures between Barrel_Bullet_Land comparisons.
 ```{r}
 
 Signatures_Phoenix %>%
@@ -626,5 +620,148 @@ Signatures_Phoenix %>%
         facet_wrap(paste("Bullet", Bullet) ~ sprintf("Barrel %02s", Barrel))+
           theme_bw()+
             ggtitle("Signatures for Questioned Bullets")
+
+```
+
+```{r}
+# High ccf & samesource('FALSE')
+
+
+f2 %>% 
+  filter(ccf >= 0.70 & samesource == "FALSE")
+
+
+Signatures_Phoenix %>% 
+  filter(id %in% c("L5-B1-3", "P7-B3-5")) %>% #Not a Match
+ggplot(data = ., aes(x = x, y = sig, color = Bullet)) + 
+  geom_line()+
+    theme_bw()+
+  scale_color_brewer(palette = "Dark2")+
+    ggtitle("L5-B1-3 VS P7-B3-5")
+
+Signatures_Phoenix %>% 
+  filter(id %in% c("L5-B1-3", "Unknown-J-5")) %>% #Possibly a Match(sum peaks suggest strong match)
+ggplot(data = ., aes(x = x, y = sig, color = Bullet)) + 
+  geom_line()+
+    theme_bw()+
+  scale_color_brewer(palette = "Dark2")+
+    ggtitle("L5-B1-3 VS Unknown-J-5")
+
+Signatures_Phoenix %>% 
+  filter(id %in% c("L5-B2-2", "U1-B1-1")) %>% #Possibly a Match(sum peaks suggest strong match)
+ggplot(data = ., aes(x = x, y = sig, color = Bullet)) + 
+  geom_line()+
+    theme_bw()+
+  scale_color_brewer(palette = "Dark2")+
+    ggtitle("L5-B2-2 vs U1-B1-1")
+
+Signatures_Phoenix %>% 
+  filter(id %in% c("M2-B2-4", "Unknown-B-2")) %>% #Match(sum peaks suggest strong match)
+ggplot(data = ., aes(x = x, y = sig, color = Bullet)) + 
+  geom_line()+
+    theme_bw()+
+  scale_color_brewer(palette = "Dark2")+
+    ggtitle("M2-B2-4 vs Unknown-B-2")
+
+Signatures_Phoenix %>% 
+  filter(id %in% c("P7-B3-5", "Unknown-T-3")) %>% #Not a Match
+ggplot(data = ., aes(x = x, y = sig, color = Bullet)) + 
+  geom_line()+
+    theme_bw()+
+  scale_color_brewer(palette = "Dark2")+
+    ggtitle("P7-B3-5 vs Unknown-T-3")
+
+Signatures_Phoenix %>% 
+  filter(id %in% c("Unknown-J-5", "Unknown-T-3")) %>% #Not a Match
+ggplot(data = ., aes(x = x, y = sig, color = Bullet)) + 
+  geom_line()+
+    theme_bw()+
+  scale_color_brewer(palette = "Dark2")+
+    ggtitle("Unknown-J-5 vs Unknown-T-3")
+
+# Analyze signatures for these comparisons
+
+```
+
+
+
+```{r}
+
+f2 <- f2 %>% mutate(
+  samesource = ifelse(f2$comparison == "M2-B2-4 vs Unknown-B-2" & f2$samesource == "FALSE", TRUE, samesource)
+)
+
+```
+
+```{r eval=FALSE, include=FALSE}
+set.seed(19980210)#20140501
+inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
+training_p <- f2[ inTraining_p,]
+testing_p  <- f2[-inTraining_p,]
+
+fitControl <- trainControl(## 10-fold CV
+                           method ='repeatedcv',
+                           number = 10,
+                           repeats = 3,
+                           search = 'random')
+
+mtry <- sqrt(ncol(training_p))
+tunegrid <- expand.grid(.mtry=mtry)
+mode1_3 <- train(as.factor(samesource) ~ ccf
+                 +rough_cor
+                 +D
+                 +sd_D
+                 +matches
+                 +mismatches
+                 +cms+non_cms
+                 +sum_peaks
+                 +overlap,
+                 data = training_p, 
+                 method = "rf",
+                 tuneLength = 15,
+                 trControl = fitControl)
+
+print(mode1_3)
+
+rf_pred_3 <- predict(mode1_3, testing_p)
+confusionMatrix(rf_pred_3, as.factor(testing_p$samesource))
+
+
+```
+
+```{r}
+set.seed(19980210)#20140501
+inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
+training_p <- f2[ inTraining_p,]
+testing_p  <- f2[-inTraining_p,]
+
+
+fitControl <- trainControl(method="repeatedcv",
+                            number=10, 
+                              repeats=3,
+                                search="grid")
+
+tunegrid <- expand.grid(.mtry=c(1:15))
+
+rf_gridsearch <- train(as.factor(samesource) ~ ccf
+                 +rough_cor
+                 +D
+                 +sd_D
+                 +matches
+                 +mismatches
+                 +cms+non_cms
+                 +sum_peaks
+                 +overlap,
+                 data = training_p, 
+                 method = "rf",
+                 metric= "roc", 
+                 tuneGrid=tunegrid, 
+                 trControl=fitControl)
+
+
+
+print(rf_gridsearch)
+plot(rf_gridsearch)
+
 
 ```
