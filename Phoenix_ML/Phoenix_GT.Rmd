@@ -36,7 +36,8 @@ Phoenix <- tibble(path = list.files(path = "/media/Sunny/CSAFE/Phoenix Set",
 ```
 
 ```{r}
-load("Ground_Truth_Data.RData")
+load("Ground_Truth_Data.RData") 
+#For Html Purposes
 
 ```
 
@@ -524,85 +525,9 @@ f2 <- f2 %>% mutate(
 table(f2$samesource)
 ```
 
-```{r}
-library(caret)
-set.seed(91191199)#20140501
-inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
-training_p <- f2[ inTraining_p,]
-testing_p  <- f2[-inTraining_p,]
-```
-
-```{r} 
-#Model1
-fitControl <- trainControl(## 10-fold CV
-                           method ='repeatedcv',
-                           number = 10,
-                           repeats = 3,
-                           search = 'random')
-
-mtry <- sqrt(ncol(training_p))
-tunegrid <- expand.grid(.mtry=mtry)
-model1 <- train(as.factor(samesource) ~ ccf
-                 +rough_cor
-                 +D
-                 +sd_D
-                 +matches
-                 +mismatches
-                 +cms+non_cms
-                 +sum_peaks, 
-                 data = training_p, 
-                 method = "rf",
-                 tuneLength = 15,
-                 trControl = fitControl)
-
-print(model1)
-
-rf_pred1 <- predict(model1, testing_p)
-confusionMatrix(rf_pred1, as.factor(testing_p$samesource))
-
-#lag, 
-
-```
-
-```{r}
-
-confusionMatrix(rf_pred1, as.factor(testing_p$samesource))
-
-```
-
-```{r}
-fitControl <- trainControl(## 10-fold CV
-                           method ='repeatedcv',
-                           number = 10,
-                           repeats = 3,
-                           search = 'random')
-
-mtry <- sqrt(ncol(training_p))
-tunegrid <- expand.grid(.mtry=mtry)
-model2 <- train(as.factor(samesource) ~ ccf
-                 +rough_cor
-                 +D
-                 +sd_D
-                 +matches
-                 +mismatches
-                 +cms+non_cms
-                 +sum_peaks
-                 +overlap,
-                 data = training_p, 
-                 method = "rf",
-                 tuneLength = 15,
-                 trControl = fitControl)
-
-print(model2)
-
-rf_pred2 <- predict(model2, testing_p)
-confusionMatrix(rf_pred2, as.factor(testing_p$samesource))
-
-```
 
 
-
-Accuracy for both models is around the same.  Now we will try and find miss classified ground truth results by examining signatures between Barrel_Bullet_Land comparisons.
+Accuracy for models is around the same.  Now we will try and find miss classified ground truth results by examining signatures between Barrel_Bullet_Land comparisons.
 ```{r}
 
 Signatures_Phoenix %>%
@@ -684,7 +609,6 @@ ggplot(data = ., aes(x = x, y = sig, color = Bullet)) +
 ```
 
 
-
 ```{r}
 
 f2 <- f2 %>% mutate(
@@ -693,75 +617,5 @@ f2 <- f2 %>% mutate(
 
 ```
 
-```{r eval=FALSE, include=FALSE}
-set.seed(19980210)#20140501
-inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
-training_p <- f2[ inTraining_p,]
-testing_p  <- f2[-inTraining_p,]
-
-fitControl <- trainControl(## 10-fold CV
-                           method ='repeatedcv',
-                           number = 10,
-                           repeats = 3,
-                           search = 'random')
-
-mtry <- sqrt(ncol(training_p))
-tunegrid <- expand.grid(.mtry=mtry)
-mode1_3 <- train(as.factor(samesource) ~ ccf
-                 +rough_cor
-                 +D
-                 +sd_D
-                 +matches
-                 +mismatches
-                 +cms+non_cms
-                 +sum_peaks
-                 +overlap,
-                 data = training_p, 
-                 method = "rf",
-                 tuneLength = 15,
-                 trControl = fitControl)
-
-print(mode1_3)
-
-rf_pred_3 <- predict(mode1_3, testing_p)
-confusionMatrix(rf_pred_3, as.factor(testing_p$samesource))
 
 
-```
-
-```{r}
-set.seed(19980210)#20140501
-inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
-training_p <- f2[ inTraining_p,]
-testing_p  <- f2[-inTraining_p,]
-
-
-fitControl <- trainControl(method="repeatedcv",
-                            number=10, 
-                              repeats=3,
-                                search="grid")
-
-tunegrid <- expand.grid(.mtry=c(1:15))
-
-rf_gridsearch <- train(as.factor(samesource) ~ ccf
-                 +rough_cor
-                 +D
-                 +sd_D
-                 +matches
-                 +mismatches
-                 +cms+non_cms
-                 +sum_peaks
-                 +overlap,
-                 data = training_p, 
-                 method = "rf",
-                 metric= "roc", 
-                 tuneGrid=tunegrid, 
-                 trControl=fitControl)
-
-
-
-print(rf_gridsearch)
-plot(rf_gridsearch)
-
-
-```

@@ -1,0 +1,235 @@
+---
+title: "Untitled"
+author: "Andrew Maloney"
+date: "12/29/2019"
+output: html_document
+---
+
+Phoenix Machine Learning Models
+
+```{r}
+
+library(caret)
+set.seed(91191199)#20140501
+inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
+training_p <- f2[ inTraining_p,]
+testing_p  <- f2[-inTraining_p,]
+
+#Model_1
+fitControl <- trainControl(## 10-fold CV
+                           method ='repeatedcv',
+                           number = 10,
+                           repeats = 3,
+                           search = 'random')
+
+mtry <- sqrt(ncol(training_p))
+tunegrid <- expand.grid(.mtry=mtry)
+model_1 <- train(as.factor(samesource) ~ ccf
+                 +rough_cor
+                 +D
+                 +sd_D
+                 +matches
+                 +mismatches
+                 +cms+non_cms
+                 +sum_peaks, 
+                 data = training_p, 
+                 method = "rf",
+                 tuneLength = 15,
+                 trControl = fitControl)
+
+print(model_1)
+
+rf_pred_1 <- predict(model_1, testing_p)
+confusionMatrix(rf_pred_1, as.factor(testing_p$samesource))
+
+```
+
+```{r}
+
+library(caret)
+set.seed(91191199)#20140501
+inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
+training_p <- f2[ inTraining_p,]
+testing_p  <- f2[-inTraining_p,]
+
+#Model_2
+fitControl <- trainControl(## 10-fold CV
+                           method ='repeatedcv',
+                           number = 10,
+                           repeats = 3,
+                           search = 'random')
+
+mtry <- sqrt(ncol(training_p))
+tunegrid <- expand.grid(.mtry=mtry)
+model_2 <- train(as.factor(samesource) ~ ccf
+                 +rough_cor
+                 +D
+                 +sd_D
+                 +matches
+                 +mismatches
+                 +cms+non_cms
+                 +sum_peaks
+                 +overlap,
+                 data = training_p, 
+                 method = "rf",
+                 tuneLength = 15,
+                 trControl = fitControl)
+
+print(model_2)
+
+rf_pred_2 <- predict(model_2, testing_p)
+confusionMatrix(rf_pred_2, as.factor(testing_p$samesource))
+
+```
+
+```{r}
+#Model_3
+
+set.seed(19980210)#20140501
+inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
+training_p <- f2[ inTraining_p,]
+testing_p  <- f2[-inTraining_p,]
+
+fitControl <- trainControl(## 10-fold CV
+                           method ='repeatedcv',
+                           number = 10,
+                           repeats = 3,
+                           search = 'random')
+
+mtry <- sqrt(ncol(training_p))
+tunegrid <- expand.grid(.mtry=mtry)
+model_3 <- train(as.factor(samesource) ~ ccf
+                 +rough_cor
+                 +D
+                 +sd_D
+                 +matches
+                 +mismatches
+                 +cms+non_cms
+                 +sum_peaks
+                 +overlap,
+                 data = training_p, 
+                 method = "rf",
+                 tuneLength = 15,
+                 trControl = fitControl)
+
+print(model_3)
+
+rf_pred_3 <- predict(model_3, testing_p)
+confusionMatrix(rf_pred_3, as.factor(testing_p$samesource))
+
+```
+
+```{r}
+#Model_4(grid_search tuning)
+set.seed(19980210)#20140501
+inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
+training_p <- f2[ inTraining_p,]
+testing_p  <- f2[-inTraining_p,]
+
+
+fitControl <- trainControl(method="repeatedcv",
+                            number=10, 
+                              repeats=3,
+                                search="grid")
+
+tunegrid <- expand.grid(.mtry=c(1:15))
+
+rf_gridsearch <- train(as.factor(samesource) ~ ccf
+                 +rough_cor
+                 +D
+                 +sd_D
+                 +matches
+                 +mismatches
+                 +cms+non_cms
+                 +sum_peaks
+                 +overlap,
+                 data = training_p, 
+                 method = "rf",
+                 metric= "accuracy", 
+                 tuneGrid=tunegrid, 
+                 trControl=fitControl)
+
+print(rf_gridsearch)
+plot(rf_gridsearch)
+
+```
+
+We have tried some generic random forest algorithms using caret.
+We can see that the model is performing with about 97% accuracy.
+
+Looking at a confusion matrix, we can see alot of true's are being identified as false.
+This is a result of our unblanced data.  We can conclude that there is bias within the prediction models towards the more common classification("false")
+
+We are going to experiment with some over- and under-sampling with cross-validation resampling.
+We are also going to try some hybrid algorithms such as ROSE and SMOTE
+
+
+
+```{r}
+#Model_5(Under-Sampling)
+
+set.seed(19980210)#20140501
+inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
+training_p <- f2[ inTraining_p,]
+testing_p  <- f2[-inTraining_p,]
+
+
+fitControl <- trainControl(method="repeatedcv",
+                            number=10, 
+                              repeats=3,
+                                sampling = "down")
+
+rf_under <- train(as.factor(samesource) ~ ccf
+                                        + rough_cor
+                                        + D
+                                        + sd_D
+                                        + matches
+                                        + mismatches
+                                        + cms + non_cms
+                                        + sum_peaks
+                                        + overlap,
+                  data = training_p,
+                  method = "rf",
+                  preProcess = c("scale", "center"),
+                  trControl = fitControl)
+print(rf_under)
+
+rf_pred_under <- predict(rf_under, testing_p)
+confusionMatrix(rf_pred_under, as.factor(testing_p$samesource))
+
+```
+
+```{r}
+#Model_6(Over-Sampling)
+
+set.seed(19980210)#20140501
+inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
+training_p <- f2[ inTraining_p,]
+testing_p  <- f2[-inTraining_p,]
+
+
+fitControl <- trainControl(method="repeatedcv",
+                            number=10, 
+                              repeats=3,
+                                sampling = "up")
+
+rf_over <- train(as.factor(samesource) ~ ccf
+                                        + rough_cor
+                                        + D
+                                        + sd_D
+                                        + matches
+                                        + mismatches
+                                        + cms + non_cms
+                                        + sum_peaks
+                                        + overlap,
+                  data = training_p,
+                  method = "rf",
+                  preProcess = c("scale", "center"),
+                  trControl = fitControl)
+print(rf_over)
+
+rf_pred_over <- predict(rf_over, testing_p)
+confusionMatrix(rf_pred_over, as.factor(testing_p$samesource))
+
+
+```
