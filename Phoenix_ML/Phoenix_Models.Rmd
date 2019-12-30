@@ -9,6 +9,27 @@ Phoenix Machine Learning Models
 
 ```{r}
 
+load("Ground_Truth_Data.RData") 
+
+```
+
+```{r}
+
+# Loading Packages
+library(dplyr)
+library(bulletxtrctr)
+library(x3ptools)
+library(ggplot2)
+library(readr)
+library(purrr)
+library(stringr)
+library(tidyr)
+library(caret)
+
+```
+
+```{r}
+
 library(caret)
 set.seed(91191199)#20140501
 inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
