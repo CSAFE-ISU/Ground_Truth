@@ -30,8 +30,7 @@ library(caret)
 
 ```{r}
 
-library(caret)
-set.seed(91191199)#20140501
+set.seed(20140501)#20140501
 inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
 training_p <- f2[ inTraining_p,]
 testing_p  <- f2[-inTraining_p,]
@@ -67,8 +66,7 @@ confusionMatrix(rf_pred_1, as.factor(testing_p$samesource))
 
 ```{r}
 
-library(caret)
-set.seed(91191199)#20140501
+set.seed(20140501)#20140501
 inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
 training_p <- f2[ inTraining_p,]
 testing_p  <- f2[-inTraining_p,]
@@ -106,7 +104,7 @@ confusionMatrix(rf_pred_2, as.factor(testing_p$samesource))
 ```{r}
 #Model_3
 
-set.seed(19980210)#20140501
+set.seed(91191199)#20140501
 inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
 training_p <- f2[ inTraining_p,]
 testing_p  <- f2[-inTraining_p,]
@@ -142,7 +140,7 @@ confusionMatrix(rf_pred_3, as.factor(testing_p$samesource))
 
 ```{r}
 #Model_4(grid_search tuning)
-set.seed(19980210)#20140501
+set.seed(20140501)#20140501
 inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
 training_p <- f2[ inTraining_p,]
 testing_p  <- f2[-inTraining_p,]
@@ -189,7 +187,7 @@ We are also going to try some hybrid algorithms such as ROSE and SMOTE
 ```{r}
 #Model_5(Under-Sampling)
 
-set.seed(19980210)#20140501
+set.seed(20140501)#20140501
 inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
 training_p <- f2[ inTraining_p,]
 testing_p  <- f2[-inTraining_p,]
@@ -211,7 +209,7 @@ rf_under <- train(as.factor(samesource) ~ ccf
                                         + overlap,
                   data = training_p,
                   method = "rf",
-                  preProcess = c("scale", "center"),
+                  #preProcess = c("scale", "center"),
                   trControl = fitControl)
 print(rf_under)
 
@@ -223,7 +221,7 @@ confusionMatrix(rf_pred_under, as.factor(testing_p$samesource))
 ```{r}
 #Model_6(Over-Sampling)
 
-set.seed(19980210)#20140501
+set.seed(20140501)#20140501
 inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
 training_p <- f2[ inTraining_p,]
 testing_p  <- f2[-inTraining_p,]
@@ -245,12 +243,103 @@ rf_over <- train(as.factor(samesource) ~ ccf
                                         + overlap,
                   data = training_p,
                   method = "rf",
-                  preProcess = c("scale", "center"),
+                  #preProcess = c("scale", "center"),
                   trControl = fitControl)
 print(rf_over)
 
 rf_pred_over <- predict(rf_over, testing_p)
 confusionMatrix(rf_pred_over, as.factor(testing_p$samesource))
+
+
+```
+
+```{r}
+#Model_7(ROSE) 
+
+
+
+set.seed(20140501)#20140501
+inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
+training_p <- f2[ inTraining_p,]
+testing_p  <- f2[-inTraining_p,]
+
+
+fitControl <- trainControl(method="repeatedcv",
+                            number=10, 
+                              repeats=3,
+                                sampling = "rose")
+
+rf_ROSE <- train(as.factor(samesource) ~ ccf
+                                        + rough_cor
+                                        + D
+                                        + sd_D
+                                        + matches
+                                        + mismatches
+                                        + cms + non_cms
+                                        + sum_peaks
+                                        + overlap,
+                  data = training_p,
+                  method = "rf",
+                  #preProcess = c("scale", "center"),
+                  trControl = fitControl)
+print(rf_ROSE)
+
+rf_pred_ROSE <- predict(rf_ROSE, testing_p)
+confusionMatrix(rf_pred_ROSE, as.factor(testing_p$samesource))
+
+```
+
+```{r}
+
+set.seed(20140501)#20140501
+inTraining_p <- createDataPartition(f2$samesource, p = .80, list = FALSE)
+training_p <- f2[ inTraining_p,]
+testing_p  <- f2[-inTraining_p,]
+
+
+fitControl <- trainControl(method="repeatedcv",
+                            number=10, 
+                              repeats=3,
+                                sampling = "smote")
+
+rf_SMOTE <- train(as.factor(samesource) ~ ccf
+                                        + rough_cor
+                                        + D
+                                        + sd_D
+                                        + matches
+                                        + mismatches
+                                        + cms + non_cms
+                                        + sum_peaks
+                                        + overlap,
+                  data = training_p,
+                  method = "rf",
+                  #preProcess = c("scale", "center"),
+                  trControl = fitControl)
+print(rf_SMOTE)
+
+rf_pred_SMOTE <- predict(rf_SMOTE, testing_p)
+confusionMatrix(rf_pred_SMOTE, as.factor(testing_p$samesource))
+
+```
+
+```{r}
+
+All_Models <- list(No_Overlap = model_1,
+               With_Overlap = model_2,
+               Different_Seed = model_3,
+               grid = rf_gridsearch,
+               under = rf_under,
+               over = rf_over,
+               rose = rf_ROSE,
+               smote = rf_SMOTE
+               )
+
+
+
+
+re <- resamples(All_Models)
+bwplot(re)
+
 
 
 ```
