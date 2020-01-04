@@ -651,40 +651,6 @@ table(f2_3$samesource)
 ```
 
 
-```{r}
-library(caret)
-set.seed(91191199)#20140501
-inTraining_p <- createDataPartition(f2_1$samesource, p = .80, list = FALSE)
-training_p <- f2_1[ inTraining_p,]
-testing_p  <- f2_1[-inTraining_p,]
-```
 
-```{r} 
-#Model1
-fitControl_v1 <- trainControl(## 10-fold CV
-                           method ='repeatedcv',
-                           number = 10,
-                           repeats = 3,
-                           search = 'random')
 
-mtry <- sqrt(ncol(training_p))
-tunegrid <- expand.grid(.mtry=mtry)
-model_v1 <- train(as.factor(samesource) ~ ccf
-                 +rough_cor
-                 +D
-                 +sd_D
-                 +matches
-                 +mismatches
-                 +cms+non_cms
-                 +sum_peaks, 
-                 data = training_p, 
-                 method = "rf",
-                 tuneLength = 15,
-                 trControl = fitControl_v1)
-
-print(model_v1)
-
-rf_pred_v1 <- predict(model_v1, testing_p)
-confusionMatrix(rf_pred_v1, as.factor(testing_p$samesource))
-```
 
