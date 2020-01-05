@@ -1,0 +1,114 @@
+---
+title: "Hamby Models"
+author: "Andrew Maloney"
+date: "1/4/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+
+# Loading Packages
+library(dplyr)
+library(bulletxtrctr)
+library(x3ptools)
+library(ggplot2)
+library(readr)
+library(purrr)
+library(stringr)
+library(tidyr)
+library(caret)
+
+```
+
+***Current*** Random Forest Model
+
+- This Model was trained using 2017 Hamby173 & 252 cleaned Data
+- We concluded from 2019 summer that there was an alignment mistake in regards to scanning/and or reading in Hamby173 & 252 bullet scans
+
+- We will be training a new model with 2019 data and see what results we come up with
+
+```{r}
+#Confusion Matrix for 2017 Rf
+
+print(rtrees$confusion)
+
+```
+
+```{r}
+#Predictor Variables used for 2017 Rf
+
+print(rtrees$terms)
+
+```
+
+We can train 3 models to start with: Hamby173, Hamby252, or both
+
+
+```{r}
+Joined_df_173 <- Joined_df_173 %>% select(-compare_id, -profile1_id, -profile2_id, -ccf_2017,
+                                          -rough_cor_2017, -lag_2017, -D_2017, -sd_D_2017,
+                                          -signature_length_2017, -overlap_2017, -matches_2017,
+                                          -mismatches_2017, -cms_2017, -non_cms_2017, -sum_peaks_2017, -study1,
+                                          -BarrelB.y, -BulletB.y, -LandB.y, -BarrelA.y, -BulletA.y, -LandA.y)
+
+Hamby_M_173 <- left_join(comparisons_173, Joined_df_173, by = c("Bullet1", "Bullet2"))
+
+
+Hamby_M_173 <- Hamby_M_173 %>% mutate(
+  match = ifelse(Hamby_M_173$Bullet1 == Hamby_M_173$Bullet2, TRUE, match)
+)
+
+
+
+Hamby_M_173 <- Hamby_M_173 %>% select(-ccf_2019,-rough_cor_2019, -lag_2019, -D_2019, -sd_D_2019,
+                                      -signature_length_2019, -overlap_2019, -matches_2019,
+                                      -mismatches_2019, -cms_2019, -non_cms_2019, -sum_peaks_2019,
+                                      -BarrelB.x, -BulletB.x, -LandB.x, -BarrelA.x, -BulletA.x, -LandA.x, -Set.y)
+```
+
+```{r}
+Joined_df_252 <- Joined_df_252 %>% select(-compare_id, -profile1_id, -profile2_id, -ccf_2017,
+                                          -rough_cor_2017, -lag_2017, -D_2017, -sd_D_2017,
+                                          -signature_length_2017, -overlap_2017, -matches_2017,
+                                          -mismatches_2017, -cms_2017, -non_cms_2017, -sum_peaks_2017, -study1,
+                                          -BarrelB.y, -BulletB.y, -LandB.y, -BarrelA.y, -BulletA.y, -LandA.y)
+
+Hamby_M_252 <- left_join(comparisons_252, Joined_df_252, by = c("Bullet1", "Bullet2"))
+
+
+Hamby_M_252 <- Hamby_M_252 %>% mutate(
+  match = ifelse(Hamby_M_252$Bullet1 == Hamby_M_252$Bullet2, TRUE, match)
+)
+
+
+
+Hamby_M_252 <- Hamby_M_252 %>% select(-ccf_2019,-rough_cor_2019, -lag_2019, -D_2019, -sd_D_2019,
+                                      -signature_length_2019, -overlap_2019, -matches_2019,
+                                      -mismatches_2019, -cms_2019, -non_cms_2019, -sum_peaks_2019,
+                                      -BarrelB.x, -BulletB.x, -LandB.x, -BarrelA.x, -BulletA.x, -LandA.x, -Set.y)
+```
+
+```{r}
+set.seed(20140501)#20140501
+inTraining_p_173 <- createDataPartition(Hamby_M_173$match, p = .80, list = FALSE)
+training_p_173 <- f2[ inTraining_p_173,]
+testing_p_173  <- f2[-inTraining_p_173,]
+
+```
+
+```{r}
+set.seed(20140501)#20140501
+inTraining_p_252 <- createDataPartition(Hamby_M_252$match, p = .80, list = FALSE)
+training_p_252 <- f2[ inTraining_p_252,]
+testing_p_252  <- f2[-inTraining_p_252,]
+
+```
+
+
+

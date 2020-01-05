@@ -1,0 +1,774 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+#Loading Packages
+#Will most likely add more
+library(dplyr)
+library(bulletxtrctr)
+library(x3ptools)
+library(randomForest)
+library(ggplot2)
+library(readr)
+library(stringr)
+library(purrr)
+library(gridExtra)
+library(tidyr)
+library(caret)
+data_dir <- "/media/Raven/REU_Refit"
+```
+
+```{r}
+
+# Reading in Hamby_173
+# Brand: Ruger
+# Model: P-85
+# Caliber: 9mm Luger
+# Twist Direction when fired is believed to be "right"
+# Bullet: Winchester 9mm(101-150) grain copper surface 
+
+df <- tibble(path = list.files(path = file.path(data_dir, "Hamby_173"), 
+                               pattern = ".x3p", recursive = T, 
+                               full.names = T)) %>% 
+  mutate(Barrel = str_extract(path, "(Unknown|Barrel)\\d{0,2}") %>% 
+           str_remove("Barrel"), 
+         Bullet = str_extract(path, "Bullet[12A-Z]") %>% 
+           str_remove("Bullet"),
+         Land = str_extract(path, "land\\d{1}") %>% 
+           str_remove("land")) %>% 
+  mutate(Set = "Hamby173") %>%
+  mutate(x3p = map(path, read_x3p)) %>%
+  mutate(x3p = map(x3p, ~x3p_m_to_mum(.) %>% y_flip_x3p()))
+
+# Plot Bullet scans to check orientation 
+image(df$x3p[[130]]) # Plot Bullet Scan using x3p
+df$x3p[[130]]$surface.matrix %>% imager::as.cimg() %>% plot() # Plot Bullet Scan using imager
+
+```
+
+```{r}
+
+# Reading in Hamby_252
+# Brand: Ruger
+# Model: p-85
+# Caliber: 9mm Luger
+# Twist Direction when fired is believed to be "right"
+# Bullet: Whinchester 9mm(101-150)grain copper surface
+
+df2 <- tibble(path = list.files(path = file.path(data_dir, "Hamby_252"), 
+                                pattern = ".x3p", recursive = T, 
+                                full.names = T)) %>% 
+  mutate(Barrel = str_extract(path, "(Unknown|Barrel)\\d{0,2}") %>% 
+           str_remove("Barrel"), 
+         Bullet = str_extract(path, "Bullet[12A-Z]") %>% 
+           str_remove("Bullet"), 
+         Land = str_extract(path, "Bullet [12A-Z]-[123456]") %>% 
+           str_remove("Bullet [12A-Z]-")) %>% 
+  mutate(Set = "Hamby252") %>%
+  mutate(x3p = map(path,read_x3p))  %>%
+  # Adjust orientation
+  mutate(x3p = map(x3p, ~x3p_m_to_mum(.) %>% rotate_x3p(angle = -90) %>% y_flip_x3p()))
+
+# Plot Bullet scans to check orientation 
+image(df2$x3p[[177]]) # Plot Bullet Scan using x3p
+df2$x3p[[177]]$surface.matrix %>% imager::as.cimg() %>% plot() # Plot Bullet Scan using imager
+
+```
+
+```{r}
+
+# Create one data set for debugging 
+Hamby <- bind_rows(df, df2)
+
+```
+
+```{r}
+
+hamby <- Hamby %>%
+  mutate(id = paste(Set, Barrel, Bullet, Land, sep = "-")) %>%
+  select(id, Set, Barrel, Bullet, Land, x3p, path)
+
+rm(df, df2)
+
+```
+
+```{r}
+# Cross Sections
+
+hamby <- hamby %>%
+  mutate(CrossSection = 
+           map_dbl(x3p, x3p_crosscut_optimize, minccf = 0.9, span = 0.3, percent_missing = 25))
+
+hamby %>% 
+  arrange(desc(CrossSection)) 
+
+```
+
+
+```{r}
+
+hamby %>% 
+  filter(Barrel != "Unknown" & Set == "Hamby173") %>% 
+    ggplot(aes(x = Barrel, y = CrossSection, fill = Bullet))+ 
+      geom_boxplot()+
+          ggtitle("Barrels 1-10")
+
+hamby %>% 
+  filter(Barrel == "Unknown" & Set == "Hamby252") %>% 
+    ggplot(aes(x = Barrel, y = CrossSection, fill = Bullet))+ 
+      geom_boxplot()+
+          ggtitle("Barrel Unknown")
+
+
+```
+
+```{r}
+
+hamby <- hamby %>% 
+  mutate(CrossCut = map2(.x = x3p, .y = CrossSection, .f = x3p_crosscut))
+
+crosscuts <- select(hamby, -path, -x3p) %>% 
+      tidyr::unnest(CrossCut)
+
+head(crosscuts, 20)
+```
+
+```{r}
+
+#Grooves
+saved_grooves_location <- "Hamby173_V2H173_H252_Grooves_data.rda"
+if (file.exists(saved_grooves_location)) {
+  hamby173$Grooves <- readRDS(saved_grooves_location)
+} else {
+  hamby173 <- hamby173 %>% 
+    mutate(Grooves = CrossCut %>% 
+             map(.f = cc_locate_grooves, 
+                        method = "rollapply", smoothfactor = 15, return_plot = T))  # use plot so that the shiny app works...
+}
+grooves_173 <- hamby173 %>% tidyr::unnest(Grooves)
+
+```
+
+```{r}
+library(shiny)
+if (file.exists(saved_grooves_location)) {
+  hamby173$Grooves <- readRDS(saved_grooves_location)
+}
+if (interactive()) { # only run when you're manually running chunks... don't run when the whole document is compiled.
+  shinyApp(
+    ui = fluidPage(
+      selectInput("k", "Investigate kth plot:",
+                  selected = 1,
+                  choices = (1:length(hamby173$Grooves)) %>% set_names(hamby173$id)
+      ),
+      textOutput("groovelocations"),
+      actionButton("confirm", "Confirm"),
+      actionButton("save", "Save"),
+      plotOutput("groovePlot", click = "plot_click"),
+      verbatimTextOutput("info")
+    ),
+    
+    server = function(input, output, session) {
+      output$groovePlot <- renderPlot({
+        k <- as.numeric(input$k)
+        p <- hamby173$Grooves[[k]]$plot
+        
+        p
+      })
+      output$groovelocations <- renderText({
+        paste(
+          "Left Groove: ", hamby173$Grooves[[as.numeric(input$k)]]$groove[1],
+          " Right Groove: ", hamby173$Grooves[[as.numeric(input$k)]]$groove[2]
+        )
+      })
+      observeEvent(input$confirm, {
+        cat(paste(hamby173$id[as.numeric(input$k)], "\n"))
+        updateSelectInput(session, "k", "Investigate kth plot:",
+                          selected = as.numeric(input$k) + 1,
+                          choices = (1:length(hamby173$Grooves)) %>% set_names(hamby173$id)
+        )
+      })
+      observeEvent(input$save, {
+        saveRDS(hamby173$Grooves, file = saved_grooves_location)
+        message("groove data saved\n")
+      })
+      
+      observeEvent(input$plot_click, {
+        k <- as.numeric(input$k)
+        xloc <- input$plot_click$x
+        
+        gr <- hamby173$Grooves[[k]]$groove
+        if (abs(gr[1] - xloc) < abs(gr[2] - xloc)) {
+          hamby173$Grooves[[k]]$groove[1] <<- xloc
+        } else {
+          hamby173$Grooves[[k]]$groove[2] <<- xloc
+        }
+        output$groovePlot <- renderPlot({
+          k <- as.numeric(input$k)
+          p <- hamby173$Grooves[[k]]$plot +
+            geom_vline(xintercept = hamby173$Grooves[[k]]$groove[1], colour = "green") +
+            geom_vline(xintercept = hamby173$Grooves[[k]]$groove[2], colour = "green")
+          
+          p
+        })
+      })
+      output$info <- renderText({
+        paste0("x=", input$plot_click$x, "\ny=", input$plot_click$y)
+      })
+    },
+    options = list(height = 500)
+  )
+  saveRDS(hamby173$Grooves, file = saved_grooves_location)
+} else {
+  if (!file.exists(saved_grooves_location)) {
+    message("run script in interactive mode to fix grooves")
+  } else {
+    hamby173$Grooves <- readRDS(saved_grooves_location)
+  }
+}
+
+```
+
+```{r}
+
+#Grooves
+saved_grooves_location_2 <- "Hamby252_V2H173_H252_Grooves_data.rda"
+if (file.exists(saved_grooves_location_2)) {
+  hamby252$Grooves <- readRDS(saved_grooves_location_2)
+} else {
+  hamby252 <- hamby252 %>% 
+    mutate(Grooves = CrossCut %>% 
+             map(.f = cc_locate_grooves, 
+                        method = "rollapply", smoothfactor = 15, return_plot = T))  # use plot so that the shiny app works...
+}
+grooves_252 <- hamby252 %>% tidyr::unnest(Grooves)
+
+```
+
+```{r}
+library(shiny)
+if (file.exists(saved_grooves_location_2)) {
+  hamby252$Grooves <- readRDS(saved_grooves_location_2)
+}
+if (interactive()) { # only run when you're manually running chunks... don't run when the whole document is compiled.
+  shinyApp(
+    ui = fluidPage(
+      selectInput("k", "Investigate kth plot:",
+                  selected = 1,
+                  choices = (1:length(hamby252$Grooves)) %>% set_names(hamby252$id)
+      ),
+      textOutput("groovelocations"),
+      actionButton("confirm", "Confirm"),
+      actionButton("save", "Save"),
+      plotOutput("groovePlot", click = "plot_click"),
+      verbatimTextOutput("info")
+    ),
+    
+    server = function(input, output, session) {
+      output$groovePlot <- renderPlot({
+        k <- as.numeric(input$k)
+        p <- hamby252$Grooves[[k]]$plot
+        
+        p
+      })
+      output$groovelocations <- renderText({
+        paste(
+          "Left Groove: ", hamby252$Grooves[[as.numeric(input$k)]]$groove[1],
+          " Right Groove: ", hamby252$Grooves[[as.numeric(input$k)]]$groove[2]
+        )
+      })
+      observeEvent(input$confirm, {
+        cat(paste(hamby252$id[as.numeric(input$k)], "\n"))
+        updateSelectInput(session, "k", "Investigate kth plot:",
+                          selected = as.numeric(input$k) + 1,
+                          choices = (1:length(hamby252$Grooves)) %>% set_names(hamby252$id)
+        )
+      })
+      observeEvent(input$save, {
+        saveRDS(hamby252$Grooves, file = saved_grooves_location_2)
+        message("groove data saved\n")
+      })
+      
+      observeEvent(input$plot_click, {
+        k <- as.numeric(input$k)
+        xloc <- input$plot_click$x
+        
+        gr <- hamby252$Grooves[[k]]$groove
+        if (abs(gr[1] - xloc) < abs(gr[2] - xloc)) {
+          hamby252$Grooves[[k]]$groove[1] <<- xloc
+        } else {
+          hamby252$Grooves[[k]]$groove[2] <<- xloc
+        }
+        output$groovePlot <- renderPlot({
+          k <- as.numeric(input$k)
+          p <- hamby252$Grooves[[k]]$plot +
+            geom_vline(xintercept = hamby252$Grooves[[k]]$groove[1], colour = "green") +
+            geom_vline(xintercept = hamby252$Grooves[[k]]$groove[2], colour = "green")
+          
+          p
+        })
+      })
+      output$info <- renderText({
+        paste0("x=", input$plot_click$x, "\ny=", input$plot_click$y)
+      })
+    },
+    options = list(height = 500)
+  )
+  saveRDS(hamby252$Grooves, file = saved_grooves_location_2)
+} else {
+  if (!file.exists(saved_grooves_location_2)) {
+    message("run script in interactive mode to fix grooves")
+  } else {
+    hamby252$Grooves <- readRDS(saved_grooves_location_2)
+  }
+}
+
+```
+
+```{r}
+
+hamby173 <- hamby173 %>% filter(Barrel == 10)
+hamby252 <- hamby252 %>% filter(Barrel == 10)
+
+#Signatures
+hamby173 <- hamby173 %>% 
+  mutate(Signatures = map2(.x = CrossCut, .y = Grooves, .f = cc_get_signature, span = 0.75, span2 = .03)) 
+
+Signatures_173 <- hamby173 %>% 
+  select(id, Set, Barrel, Bullet, Land, Signatures) %>% 
+    tidyr::unnest()
+
+
+
+#Signatures
+hamby252 <- hamby252 %>% 
+  mutate(Signatures = map2(.x = CrossCut, .y = Grooves, .f = cc_get_signature, span = 0.75, span2 = .03)) 
+
+Signatures_252 <- hamby252 %>% 
+  select(id, Set, Barrel, Bullet, Land, Signatures) %>% 
+    tidyr::unnest()
+
+
+
+
+
+
+
+
+
+```
+
+
+```{r}
+
+Signatures_173 %>%
+  filter(Barrel != "Unknown") %>% 
+ggplot(data = ., aes(x = x, y = sig, color = Land)) + 
+  geom_line()+
+  facet_grid(Set + paste("Bullet", Bullet) ~ sprintf("Barrel %02s", Barrel))+
+  ggtitle("Signatures \\")
+
+
+
+Signatures_173 %>% 
+  filter(Barrel == "Unknown") %>% 
+ggplot(data = ., aes(x = x, y = sig, color = Land)) + 
+  geom_line()+
+  facet_wrap(paste("Bullet", Bullet) ~ sprintf("Barrel %02s", Barrel), ncol = 4)+
+    ggtitle("Barrels Unknown for Hamby 173")
+
+
+Signatures_252 %>%
+  filter(Barrel != "Unknown") %>% 
+ggplot(data = ., aes(x = x, y = sig, color = Land)) + 
+  geom_line()+
+  facet_grid(Set + paste("Bullet", Bullet) ~ sprintf("Barrel %02s", Barrel))+
+  ggtitle("Signatures Barrels 1-10 252")
+
+
+
+Signatures_252 %>% 
+  filter(Barrel == "Unknown") %>% 
+ggplot(data = ., aes(x = x, y = sig, color = Land)) + 
+  geom_line()+
+  facet_wrap(paste("Bullet", Bullet) ~ sprintf("Barrel %02s", Barrel), ncol = 4)+
+    ggtitle("Barrels Unknown for Hamby 252")
+
+
+Signatures_252 %>% 
+  filter(id %in% c("Hamby252-8-1-1")) %>% 
+ggplot(data = ., aes(x = x, y = sig, color = Bullet)) + 
+  geom_line()+
+    theme_bw()+
+  scale_color_brewer(palette = "Dark2")+
+    ggtitle("Residual Plot")
+ggsave("ResidualPlot.png", dpi = 500)
+
+Signatures_252 %>% 
+  filter(id %in% c("Hamby252-8-1-1", "Hamby252-Unknown-L-1")) %>% 
+ggplot(data = ., aes(x = x, y = sig, color = Bullet)) + 
+  geom_line()+
+    theme_bw()+
+  scale_color_brewer(palette = "Dark2")+
+    ggtitle("Aligned Signatures")
+
+ggsave("AlignedSignatures.png", dpi = 500)
+
+
+head(Signatures_252)
+```
+
+
+```{r}
+
+comparisons_173 <- crossing(Bullet1 = hamby173$id, Bullet2 = hamby173$id) %>%
+  left_join(nest(hamby173, -id) %>% magrittr::set_names(c("Bullet1", "Bullet1_data"))) %>%
+  left_join(nest(hamby173, -id) %>% magrittr::set_names(c("Bullet2", "Bullet2_data"))) %>%
+  mutate(Set1 = str_extract(Bullet1, "Hamby\\d{2,3}"),
+         Set2 = str_extract(Bullet2, "Hamby\\d{2,3}")) %>%
+  filter(Set1 == Set2) %>% # Get rid of cross-set comparisons for now...
+  select(-matches("Set"))
+
+comparisons_252 <- crossing(Bullet1 = hamby252$id, Bullet2 = hamby252$id) %>%
+  left_join(nest(hamby252, -id) %>% magrittr::set_names(c("Bullet1", "Bullet1_data"))) %>%
+  left_join(nest(hamby252, -id) %>% magrittr::set_names(c("Bullet2", "Bullet2_data"))) %>%
+  mutate(Set1 = str_extract(Bullet1, "Hamby\\d{2,3}"),
+         Set2 = str_extract(Bullet2, "Hamby\\d{2,3}")) %>%
+  filter(Set1 == Set2) %>% # Get rid of cross-set comparisons for now...
+  select(-matches("Set"))
+
+```
+
+```{r}
+plan(multicore)
+
+get_sig <- function(data) {
+  map(data$Signatures, "sig")
+}
+comparisons_173 <- comparisons_173 %>%
+  mutate(sig1 = map(Bullet1_data, get_sig), sig2 = future_map(Bullet2_data, get_sig))
+
+comparisons_173 <- comparisons_173 %>%
+  mutate(Aligned = map2(sig1, sig2, ~sig_align(unlist(.x), unlist(.y)))) # Getting Aligned signatures
+
+# Get striae
+comparisons_173 <- comparisons_173 %>%
+  mutate(Striae = map(Aligned, sig_cms_max)) # Obtaining Striae
+
+saveRDS(select(comparisons_173, -Bullet1_data, -Bullet2_data), file = "Hamby_173Comparisons.rda")
+
+comparisons_173 <- comparisons_173 %>% 
+  select(-Bullet1_data, -Bullet2_data)
+
+get_sig <- function(data) {
+  map(data$Signatures, "sig")
+}
+comparisons_252 <- comparisons_252 %>%
+  mutate(sig1 = map(Bullet1_data, get_sig), sig2 = future_map(Bullet2_data, get_sig))
+
+comparisons_252 <- comparisons_252 %>%
+  mutate(Aligned = map2(sig1, sig2, ~sig_align(unlist(.x), unlist(.y)))) # Getting Aligned signatures
+
+# Get striae
+comparisons_252 <- comparisons_252 %>%
+  mutate(Striae = map(Aligned, sig_cms_max)) # Obtaining Striae
+
+saveRDS(select(comparisons_252, -Bullet1_data, -Bullet2_data), file = "Hamby_252Comparisons.rda")
+
+comparisons_252 <- comparisons_252 %>% 
+  select(-Bullet1_data, -Bullet2_data)
+
+
+#--------------------------------------------------------------------------------------------------#
+
+comparisons_173 <- comparisons_173 %>% 
+  mutate(features = map2(Aligned, Striae, extract_features_all, resolution = 1.5625)) #ObtainingFeatures
+
+comparisons_173 <- comparisons_173 %>% 
+  mutate(Legacy_Features = map(Striae, extract_features_all_legacy, resolution = 1.5625)) # Obtaining feature leacy
+
+comparisons_legacy_173 <- comparisons_173 %>% 
+  select(-features) %>%
+  tidyr::unnest(Legacy_Features) # Extracting feature legacy
+
+comparisons_173 <- comparisons_173 %>%
+  select(-Legacy_Features) %>%
+  tidyr::unnest(features)
+
+comparisons_252 <- comparisons_252 %>% 
+  mutate(features = map2(Aligned, Striae, extract_features_all, resolution = 1.5625)) #ObtainingFeatures
+
+comparisons_252 <- comparisons_252 %>% 
+  mutate(Legacy_Features = map(Striae, extract_features_all_legacy, resolution = 1.5625)) # Obtaining feature leacy
+
+comparisons_legacy_252 <- comparisons_252 %>% 
+  select(-features) %>%
+  tidyr::unnest(Legacy_Features) # Extracting feature legacy
+
+comparisons_252 <- comparisons_252 %>%
+  select(-Legacy_Features) %>%
+  tidyr::unnest(features)
+
+head(comparisons_252, 50)
+```
+
+```{r}
+
+comparisons_173 <- comparisons_173 %>% 
+  mutate(Set = gsub("(Hamby173|Hamby252)-([0-9]{1,2}|Unknown)-([1-2A-Z])-([1-6])", "\\1", Bullet2))
+comparisons_173 <- comparisons_173 %>% 
+  mutate(BarrelA = gsub("(Hamby173|Hamby252)-([0-9]{1,2}|Unknown)-([1-2A-Z])-([1-6])", "\\2", Bullet2))
+comparisons_173 <- comparisons_173 %>% 
+  mutate(BarrelB = gsub("(Hamby173|Hamby252)-([0-9]{0,2}|Unknown)-([1-2A-Z])-([1-6])", "\\2", Bullet1))
+comparisons_173 <- comparisons_173 %>% 
+  mutate(BulletA = gsub("(Hamby173|Hamby252)-([0-9]{1,2}|Unknown)-([1-2A-Z])-([1-6])", "\\3", Bullet2))
+comparisons_173 <- comparisons_173 %>% 
+  mutate(BulletB = gsub("(Hamby173|Hamby252)-([0-9]{1,2}|Unknown)-([1-2A-Z])-([1-6])", "\\3", Bullet1))
+comparisons_173 <- comparisons_173 %>% 
+  mutate(LandA = gsub("(Hamby173|Hamby252)-([0-9]{1,2}|Unknown)-([1-2A-Z])-([1-6])", "\\4", Bullet2))
+comparisons_173 <- comparisons_173 %>% 
+  mutate(LandB = gsub("(Hamby173|Hamby252)-([0-9]{1,2}|Unknown)-([1-2A-Z])-([1-6])", "\\4", Bullet1))
+
+comparisons_173 <- comparisons_173 %>% 
+  select(-sig1, -sig2, -Aligned, -Striae, -left_cms, -right_cms)
+head(comparisons_173, 50)
+
+
+comparisons_252 <- comparisons_252 %>% 
+  mutate(Set = gsub("(Hamby173|Hamby252)-([0-9]{1,2}|Unknown)-([1-2A-Z])-([1-6])", "\\1", Bullet2))
+comparisons_252 <- comparisons_252 %>% 
+  mutate(BarrelA = gsub("(Hamby173|Hamby252)-([0-9]{1,2}|Unknown)-([1-2A-Z])-([1-6])", "\\2", Bullet2))
+comparisons_252 <- comparisons_252 %>% 
+  mutate(BarrelB = gsub("(Hamby173|Hamby252)-([0-9]{0,2}|Unknown)-([1-2A-Z])-([1-6])", "\\2", Bullet1))
+comparisons_252 <- comparisons_252 %>% 
+  mutate(BulletA = gsub("(Hamby173|Hamby252)-([0-9]{1,2}|Unknown)-([1-2A-Z])-([1-6])", "\\3", Bullet2))
+comparisons_252 <- comparisons_252 %>% 
+  mutate(BulletB = gsub("(Hamby173|Hamby252)-([0-9]{1,2}|Unknown)-([1-2A-Z])-([1-6])", "\\3", Bullet1))
+comparisons_252 <- comparisons_252 %>% 
+  mutate(LandA = gsub("(Hamby173|Hamby252)-([0-9]{1,2}|Unknown)-([1-2A-Z])-([1-6])", "\\4", Bullet2))
+comparisons_252 <- comparisons_252 %>% 
+  mutate(LandB = gsub("(Hamby173|Hamby252)-([0-9]{1,2}|Unknown)-([1-2A-Z])-([1-6])", "\\4", Bullet1))
+
+comparisons_252 <- comparisons_252 %>% 
+  select(-sig1, -sig2, -Aligned, -Striae, -left_cms, -right_cms)
+
+comparisons_252 %>% filter(Bullet1 == "Hamby252-8-1-1")
+
+```
+
+```{r}
+
+features_2017 <- read_csv("features-hamby.csv") #Reading in csv
+features_2017 <- features_2017 %>%
+  select(-land1_id, -land2_id) %>% # removing
+    filter(study1 != "Cary" & study2 != "Cary") %>%
+        filter(study1 == study2) %>%
+          select(-study2) %>%
+      rename(BarrelB = barrel1, BulletB = bullet1, LandB = land1) %>% # Changed column names
+      rename(BarrelA = barrel2, BulletA = bullet2, LandA = land2) %>% # Changed column names
+          mutate(study1 = gsub("Hamby44", "Hamby173", study1)) %>% #Chnaging observation name
+            mutate(study1 = factor(study1, levels = c("Hamby173", "Hamby252"))) %>% # for ordering principles
+      rename(ccf_2017 = ccf, rough_cor_2017 = rough_cor, lag_2017 = lag, D_2017 = D, sd_D_2017 = sd_D, signature_length_2017 = signature_length, overlap_2017 = overlap, matches_2017 = matches, mismatches_2017 = mismatches, cms_2017 = cms, non_cms_2017 = non_cms, sum_peaks_2017 = sum_peaks) # Column names changed for comparing purposes 
+
+#Exploring we see that all lettered Barrels only have bullet equal to 1. No need to worry about a lettered barrel having a bullet 2
+
+features_2017 <- features_2017 %>% 
+  mutate(BulletA = ifelse(str_detect(BarrelA, "[A-Z]"), BarrelA, BulletA)) %>%
+  mutate(BarrelA = ifelse(str_detect(BarrelA, "[A-Z]"), "Unknown", BarrelA))
+
+
+
+features_2017 <- features_2017 %>% 
+  mutate(Bullet1 = paste(study1, BarrelB, BulletB, LandB, sep = "-"),
+         Bullet2 = paste(study1, BarrelA, BulletA, LandA, sep = "-"))# Creating ID similar to Heike's 
+
+features_2017 <- features_2017[order(features_2017$study1), ]
+
+#Ordered Set column so that all 173 observations came before 252 observations
+# At first glance Hamby173 Barrel 10, Bullet 1, Land 1 seems to be missing
+
+features_2017 <- features_2017 %>% 
+  mutate(BarrelB = as.character(BarrelB), 
+         BulletA = as.character(BulletA), 
+         BulletB = as.character(BulletB), 
+         LandA = as.character(LandA), 
+         LandB = as.character(LandB))
+
+head(features_2017)
+
+```
+
+```{r}
+
+table(comparisons_173$BarrelA)
+table(comparisons_173$BulletA)
+table(comparisons_173$LandA)
+
+table(comparisons_252$BarrelA)
+table(comparisons_252$BulletA)
+table(comparisons_252$LandA)
+#----------------------------------------------------------------#
+table(features_2017$BarrelA)
+table(features_2017$BulletA)
+table(features_2017$LandA)
+```
+
+```{r}
+library(viridis)
+features_2017 %>%             
+ filter(!is.na(BarrelA)) %>%
+   filter(!is.na(BarrelB)) %>%
+     group_by(BarrelA, BarrelB, Bullet1, Bullet2, study1) %>%
+      arrange(desc(signature_length_2017)) %>% 
+       filter(row_number() == 1) %>% 
+                ungroup() %>% 
+  group_by(BarrelA, BarrelB, study1) %>%
+    summarise(count = n()) %>% 
+      ggplot(aes(x = BarrelA, y = BarrelB))+
+       geom_tile(aes(fill = count))+
+        scale_fill_viridis(option = "plasma", direction = -1)+
+          geom_text(aes(label = count))+
+            ggtitle("Comparison Count Version 2")+
+              theme_bw()+ theme(axis.text.x = element_text(angle = 10))+
+                 facet_grid(~study1)
+
+```
+
+```{r}
+features_2017_173 <- features_2017 %>%
+  filter(study1 == "Hamby173")
+
+features_2017_252 <- features_2017 %>%
+  filter(study1 == "Hamby252")
+
+
+comparisons_for_join_173 <- comparisons_173 %>% 
+  filter(ccf != 1) %>% 
+    rowwise() %>%
+      mutate(sorter = paste(sort(c(Bullet1, Bullet2)), collapse = "-")) %>% 
+        distinct(sorter, .keep_all = T) %>% select(-sorter)
+
+
+comparisons_for_join_252 <- comparisons_252 %>% 
+  filter(ccf != 1) %>% 
+    rowwise() %>%
+      mutate(sorter = paste(sort(c(Bullet1, Bullet2)), collapse = "-")) %>% 
+        distinct(sorter, .keep_all = T) %>% select(-sorter)
+
+comparisons_for_join_173 <- na.omit(comparisons_for_join_173)# Remove Na
+comparisons_for_join_173 <- comparisons_for_join_173 %>%
+  select(-cms2_per_mm, -cms_per_mm, -lag_mm, -matches_per_mm, -mismatches_per_mm, -non_cms_per_mm, -cms2, -length) %>%
+    rename(ccf_2019 = ccf, cms_2019 = cms, D_2019 = D, lag_2019 = lag, matches_2019 = matches, mismatches_2019 = mismatches, non_cms_2019 = non_cms, overlap_2019 = overlap, rough_cor_2019 = rough_cor, sd_D_2019 = sd_D, sum_peaks_2019 = sum_peaks, signature_length_2019 = length_mm) 
+
+comparisons_for_join_252 <- na.omit(comparisons_for_join_252)# Remove Na
+comparisons_for_join_252 <- comparisons_for_join_252 %>%
+  select(-cms2_per_mm, -cms_per_mm, -lag_mm, -matches_per_mm, -mismatches_per_mm, -non_cms_per_mm, -cms2, -length) %>%
+    rename(ccf_2019 = ccf, cms_2019 = cms, D_2019 = D, lag_2019 = lag, matches_2019 = matches, mismatches_2019 = mismatches, non_cms_2019 = non_cms, overlap_2019 = overlap, rough_cor_2019 = rough_cor, sd_D_2019 = sd_D, sum_peaks_2019 = sum_peaks, signature_length_2019 = length_mm) 
+
+features_2017_173 <- na.omit(features_2017_173) # Remove Na
+features_2017_252 <- na.omit(features_2017_252)
+
+head(comparisons_for_join_173)
+head(features_2017_173)
+```
+
+```{r}
+
+Joined_df_173 <- inner_join(comparisons_for_join_173, features_2017, by = c("Bullet1", "Bullet2"))
+Joined_df_252 <- inner_join(comparisons_for_join_252, features_2017, by = c("Bullet1", "Bullet2"))
+
+head(Joined_df_173)
+head(Joined_df_252)
+
+Joined_df_173 %>% filter(match == "TRUE")
+```
+
+```{r}
+
+Joined_df_long_173 <- Joined_df_173 %>%
+  gather(ccf_2019:sum_peaks_2019, ccf_2017:sum_peaks_2017, key = "year", value = "value") %>%
+    extract(year, c("feature", "year"), regex = "([a-zD_]{1,})_(\\d{4})") %>%
+      spread(key = "year", value = "value")
+
+
+Joined_df_long_252 <- Joined_df_252 %>%
+  gather(ccf_2019:sum_peaks_2019, ccf_2017:sum_peaks_2017, key = "year", value = "value") %>%
+    extract(year, c("feature", "year"), regex = "([a-zD_]{1,})_(\\d{4})") %>%
+      spread(key = "year", value = "value")
+
+
+
+head(Joined_df_long_173)
+head(Joined_df_long_252)
+```
+
+```{r}
+
+Joined_df_long_252 %>% 
+  ggplot(aes(x = `2019`, y = `2017`))+
+    geom_bin2d(aes(), bins = 65)+
+    geom_point(aes(color = "match"), alpha = .25, data = filter(Joined_df_long_252, match))+
+    geom_abline()+
+      scale_color_manual("", values = c("match" = "orange"))+
+      scale_fill_gradient(low = "white", high = "navy", trans = "log10")+
+        facet_wrap(~feature, scales = "free")+
+          xlab("2019")+ ylab("2017")+ ggtitle("Features 2017 Vs Features 2019")
+
+Joined_df_long_173 %>% 
+  ggplot(aes(x = `2019`, y = `2017`))+
+    geom_bin2d(aes(), bins = 65)+
+    geom_point(aes(color = "match"), alpha = .25, data = filter(Joined_df_long_252, match))+
+    geom_abline()+
+      scale_color_manual("", values = c("match" = "orange"))+
+      scale_fill_gradient(low = "white", high = "navy", trans = "log10")+
+        facet_wrap(~feature, scales = "free")+
+          xlab("2019")+ ylab("2017")+ ggtitle("Features 2017 Vs Features 2019")
+
+```
+
+```{r}
+
+Hamby_Data_Long_by_YEAR <- Joined_df_173 %>% 
+  select(1:2, match, ccf_2019:sum_peaks_2019, ccf_2017:sum_peaks_2017) %>% 
+    gather(key="measure", value="value", ccf_2019:sum_peaks_2017) %>%   
+      mutate(Year = if_else(grepl("^.+(2017)$", measure), 2017, 2019),
+             measure = str_remove(measure, "(_2017|_2019)?$"))
+        
+Hamby_Data_Long_by_YEAR %>%
+    ggplot(aes(value, fill = match))+
+      geom_density(position = "identity", alpha = 0.50)+
+        facet_wrap(~Year+measure, nrow = 2, scales = "free")+
+          scale_fill_brewer(palette = "Paired") + theme_bw()+
+            ggtitle("Marginal Density Plots")
+
+
+Hamby_Data_Long_by_YEAR_252 <- Joined_df_252 %>% 
+  select(1:2, match, ccf_2019:sum_peaks_2019, ccf_2017:sum_peaks_2017) %>% 
+    gather(key="measure", value="value", ccf_2019:sum_peaks_2017) %>%   
+      mutate(Year = if_else(grepl("^.+(2017)$", measure), 2017, 2019),
+             measure = str_remove(measure, "(_2017|_2019)?$"))
+        
+Hamby_Data_Long_by_YEAR_252 %>%
+    ggplot(aes(value, fill = match))+
+      geom_density(position = "identity", alpha = 0.50)+
+        facet_wrap(~Year+measure, nrow = 2, scales = "free")+
+          scale_fill_brewer(palette = "Paired") + theme_bw()+
+            ggtitle("Marginal Density Plots")
+```
+
+```{r}
+#Statistical Summary
+Joined_df_173 %>% select(ccf_2019:sum_peaks_2019, ccf_2017:sum_peaks_2017) %>% summary()
+
+
+Joined_df_252 %>% select(ccf_2019:sum_peaks_2019, ccf_2017:sum_peaks_2017) %>% summary()
+```
+
